@@ -1,0 +1,6 @@
+Changes
+Makefile.PL
+MANIFEST
+README
+t/AnyEvent-RipeRedis-Cluster.t
+lib/AnyEvent/RipeRedis/Cluster.pm
