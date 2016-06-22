@@ -9,14 +9,13 @@ our $VERSION = '0.01';
 use AnyEvent::Redis::RipeRedis;
 
 use Scalar::Util qw( weaken );
-use List::Util qw( shuffle );
 
 use constant {
  MAX_SLOTS     => 16384,
  MAX_REDIRECTS => 5,
 };
 
-my @CONNECTOR_PARAM_NAMES = qw(
+my @NODE_PARAM_NAMES = qw(
   password
   database
   encoding
@@ -79,23 +78,24 @@ sub new {
   $self->{on_node_connect_error} = $params{on_node_connect_error};
   $self->{on_node_error}         = $params{on_node_error};
 
-  my %connector_params;
-  foreach my $name ( @CONNECTOR_PARAM_NAMES ) {
+  my %node_params;
+  foreach my $name ( @NODE_PARAM_NAMES ) {
     next unless defined $params{$name};
-    $connector_params{$name} = $params{$name};
+    $node_params{$name} = $params{$name};
   }
-  $self->{_connector_params} = \%connector_params;
+  $self->{_node_params} = \%node_params;
 
-  $self->{_nodes}       = {};
-  $self->{_slots}       = [];
-  $self->{_commands}    = {};
-  $self->{_ready}       = 0;
-  $self->{_input_queue} = [];
-  $self->{_tmp_queue}   = [];
+  $self->{_master_nodes} = [];
+  $self->{_slave_nodes}  = [];
+  $self->{_nodes}        = [];
+  $self->{_slots}        = [];
+  $self->{_commands}     = {};
+  $self->{_ready}        = 0;
+  $self->{_input_queue}  = [];
+  $self->{_tmp_queue}    = [];
 
   # TODO check lazy
-  my @shuffled_nodes = shuffle( @{ $self->{startup_nodes} } );
-  $self->_discover_cluster( \@shuffled_nodes );
+  $self->_discover_cluster( [ @{ $self->{startup_nodes} } ] );
 
   return $self;
 }
@@ -120,71 +120,85 @@ sub crc16 {
 sub _discover_cluster {
   my $self          = shift;
   my $startup_nodes = shift;
-  my $node_num      = shift || 0;
 
-  my $node_params = $startup_nodes->[$node_num];
+  my $node_params = _shift_random($startup_nodes);
 
-  my $redis = $self->_prepare_connector( $node_params->{host},
+  my $node = $self->_prepare_node( $node_params->{host},
       $node_params->{port} );
 
-  $redis->cluster_slots(
+  $node->cluster_slots(
     sub {
       my $slot_ranges = shift;
 
-      $redis->disconnect();
-      undef $redis;
+      $node->disconnect();
+      undef $node;
 
       if (@_) {
-         unless ( ++$node_num < $self->{startup_nodes} ) {
+        unless ( @{$startup_nodes} ) {
           # TODO handle error
           # Can't discover cluster through nodes: ...
 
           return;
         }
 
-        $self->_discover_cluster( $startup_nodes, $node_num );
+        $self->_discover_cluster($startup_nodes);
 
         return;
       }
 
-      my $nodes = $self->{_nodes};
+      my %master_nodes_idx;
+      my %slave_nodes_idx;
+      my %nodes_idx;
       my $slots = $self->{_slots};
 
       foreach my $slot_range ( @{$slot_ranges} ) {
-        my @connectors;
+        my @slot_nodes;
         my $length = scalar @{$slot_range};
 
-        foreach my $node ( @{$slot_range}[ 2 .. $length - 1 ] ) {
-          my $connector;
+        for ( my $i = 2; $i < $length; $i++ ) {
+          my $node_params   = $slot_range->[$i];
+          my $node_hostport = "$node_params->[0]:$node_params->[1]";
 
-          unless ( defined $nodes->{"$node->[0]:$node->[1]"} ) {
-            $connector = $self->_prepare_connector( $node->[0], $node->[1] );
-            $nodes->{"$node->[0]:$node->[1]"} = $connector;
+          unless ( defined $nodes_idx{$node_hostport} ) {
+            my $node = $self->_prepare_node( @{$node_params} );
+
+            if ( $i == 2 ) {
+              $master_nodes_idx{$node_hostport} = $node;
+            }
+            else {
+              $slave_nodes_idx{$node_hostport} = $node;
+            }
+
+            $nodes_idx{$node_hostport} = $node;
           }
 
-          push( @connectors, $nodes->{"$node->[0]:$node->[1]"} );
+          push( @slot_nodes, $nodes_idx{$node_hostport} );
         }
 
         for ( $slot_range->[0] .. $slot_range->[1] ) {
-          $slots->[$_] = \@connectors;
+          $slots->[$_] = \@slot_nodes;
         }
       }
 
-      my @shuffled_nodes = shuffle( values %{$nodes} );
-      $self->_discover_commands( \@shuffled_nodes );
+      $self->{_master_nodes} = [ values %master_nodes_idx ];
+      $self->{_slave_nodes}  = [ values %slave_nodes_idx ];
+      $self->{_nodes}        = [ values %nodes_idx ];
+
+      my @nodes = @{ $self->{_nodes} };
+      $self->_discover_commands( \@nodes );
     }
   );
 
   return;
 }
 
-sub _prepare_connector {
+sub _prepare_node {
   my $self = shift;
   my $host = shift;
   my $port = shift;
 
   return AnyEvent::Redis::RipeRedis->new(
-    %{ $self->{_connector_params} },
+    %{ $self->{_node_params} },
     host             => $host,
     port             => $port,
     on_connect       => $self->_get_on_node_connect( $host, $port ),
@@ -256,30 +270,29 @@ sub _get_on_node_error {
 }
 
 sub _discover_commands {
-  my $self     = shift;
-  my $nodes    = shift;
-  my $node_num = shift || 0;
+  my $self  = shift;
+  my $nodes = shift;
 
-  my $redis = $nodes->[$node_num];
+  my $node = _shift_random($nodes);
 
-  $redis->command(
+  $node->command(
     sub {
-      my $commands_info = shift;
+      my $cmds_info = shift;
 
       if (@_) {
-         unless ( ++$node_num < $self->{_nodes} ) {
+         unless ( @{$nodes} ) {
           # TODO handle error
           # Can't discover commands through nodes: ...
 
           return;
         }
 
-        $self->_discover_commands( $nodes, $node_num );
+        $self->_discover_commands($nodes);
 
         return;
       }
 
-      foreach my $cmd_info ( @{$commands_info} ) {
+      foreach my $cmd_info ( @{$cmds_info} ) {
         my $keyword = lc( $cmd_info->[0] );
 
         my $write_flag       = 0;
@@ -295,14 +308,13 @@ sub _discover_commands {
         }
 
         $self->{_commands}{$keyword} = {
-          args_num      => $cmd_info->[1],
           write         => $write_flag,
           movablekeys   => $movablekeys_flag,
           first_key_pos => $cmd_info->[3],
-          last_key_pos  => $cmd_info->[4],
-          keys_step     => $cmd_info->[5],
         };
       }
+
+      # TODO command READONLY
 
       $self->{_ready} = 1;
       $self->_flush_input_queue();
@@ -324,30 +336,171 @@ sub _execute_cmd {
 
   my $cmd_info = $self->{_commands}{ $cmd->{kwd} };
 
+  $self->_get_first_key( $cmd,
+    sub {
+      my $first_key = shift;
+
+      if (@_) {
+        # TODO handle error
+
+        return;
+      }
+
+      $self->_route_to_node( $cmd, $first_key );
+    }
+  );
+
+  return;
+}
+
+sub _get_first_key {
+  my $self = shift;
+  my $cmd  = shift;
+  my $cb   = shift;
+
+  my $cmd_info = $self->{_commands}{ $cmd->{kwd} };
+
   if ( $cmd_info->{movablekeys} ) {
-    # TODO COMMAND GETKEYS from any node
+    my @nodes = @{ $self->{_nodes} };
 
-    return;
+    $self->_command_getkeys( \@nodes, $cmd,
+      sub {
+        my $keys = shift;
+
+        if (@_) {
+          $cb->( undef, @_ );
+
+          return;
+        }
+
+        $cb->( @{$keys} ? $keys->[0] : () );
+      }
+    );
   }
+  else {
+    if ( $cmd_info->{first_key_pos} > 0 ) {
+      my $key = $cmd->{args}[ $cmd_info->{first_key_pos} - 1 ];
 
-
-
-  my $first_key_pos = $self->{_commands}{ $cmd->{kwd} }{first_key_pos};
-
-
-  if ( $first_key_pos != 0 ) {
-    print "$cmd->{args}[ $first_key_pos - 1 ] !!!!\n";
+      $cb->($key);
+    }
+    else {
+      $cb->();
+    }
   }
 
   return;
 }
 
-sub _route_cmd {
-  my $self      = shift;
-  my $first_key = shift;
-  my $cmd       = shift;
+sub _route_to_node {
+  my $self = shift;
+  my $cmd  = shift;
+  my $key  = shift;
 
-  my $cmd_info = $self->{_commands}{ $cmd->{kwd} };
+  if ( defined $key ) {
+    my $slot = _get_slot_by_key($key);
+    my $nodes = $self->{_slots}[$slot];
+
+    my $cmd_info = $self->{_commands}{ $cmd->{kwd} };
+
+    if ( $cmd_info->{write} || !$self->{scale_reads} ) {
+      $self->_execute_on_node( $nodes->[0], $cmd );
+    }
+    else {
+      $self->_execute_on_random_node( $nodes, $cmd );
+    }
+  }
+  else {
+    my @nodes = @{ $self->{_nodes} };
+    $self->_execute_on_random_node( \@nodes, $cmd );
+  }
+
+  return;
+}
+
+sub _command_getkeys {
+  my $self  = shift;
+  my $nodes = shift;
+  my $cmd   = shift;
+  my $cb    = shift;
+
+  my $node = _shift_random($nodes);
+
+  $node->command_getkeys( $cmd->{kwd}, @{ $cmd->{args} },
+    sub {
+      my $keys = shift;
+
+      if (@_) {
+         unless ( @{$nodes} ) {
+          $cb->( undef, @_ );
+
+          return;
+        }
+
+        $self->_command_getkeys( $nodes, $cmd );
+
+        return;
+      }
+
+      $cb->($keys);
+    }
+  );
+
+  return;
+}
+
+sub _execute_on_random_node {
+  my $self  = shift;
+  my $nodes = shift;
+  my $cmd   = shift;
+
+  my $node = _shift_random($nodes);
+  my $kwd  = $cmd->{kwd};
+  my $cb   = $cmd->{cb};
+
+  $cmd->{cb} = sub {
+    my $data = shift;
+
+    if (@_) {
+       unless ( @{$nodes} ) {
+        # TODO handle error
+        # Can't discover commands through nodes: ...
+
+        return;
+      }
+
+      $self->_execute_on_random_node( $nodes, $cmd );
+
+      return;
+    }
+
+    $cb->($data);
+  };
+
+  $self->_execute_on_node( $node, $cmd );
+
+  return;
+}
+
+sub _execute_on_node {
+  my $self  = shift;
+  my $node  = shift;
+  my $cmd   = shift;
+
+  my $kwd = $cmd->{kwd};
+
+  $node->$kwd( @{$cmd->{args}},
+    sub {
+      my $data = shift;
+
+      if (@_) {
+         # TODO process MOVED and ASK
+
+        return;
+      }
+
+      $cmd->{cb}->($data);
+    }
+  );
 
   return;
 }
@@ -365,27 +518,19 @@ sub _flush_input_queue {
   return;
 }
 
-sub _get_shuffled_nodes_by_key {
-  my $self = shift;
-  my $key  = shift;
+sub _shift_random {
+  my $nodes = shift;
 
-  my $slot = $self->_get_slot_by_key($key);
+  my $node_num = int( rand( scalar @{$nodes} ) );
+  my $node     = $nodes->[$node_num];
+  $nodes->[$node_num] = $nodes->[0];
+  shift @{$nodes};
 
-  return shuffle @{ $self->{_slots}[$slot] };
-}
-
-sub _get_master_node_by_key {
-  my $self = shift;
-  my $key  = shift;
-
-  my $slot = $self->_get_slot_by_key($key);
-
-  return $self->{_slots}[$slot][0];
+  return $node;
 }
 
 sub _get_slot_by_key {
-  my $self = shift;
-  my $key  = shift;
+  my $key = shift;
 
   my $tag = $key;
 

@@ -32,7 +32,22 @@ my $redis = AnyEvent::RipeRedis::Cluster->new(
 
 my $cv = AE::cv();
 
-$redis->get( 'foo', sub {} );
-$redis->set( 'foo', 'bar', sub {} );
+$cv->begin;
+
+$redis->set( 'foo', 'bar',
+  sub {
+    print Dumper( \@_ );
+    $cv->end;
+  },
+);
+
+$cv->begin;
+
+$redis->get( 'foo',
+  sub {
+    print Dumper( \@_ );
+    $cv->end;
+  }
+);
 
 $cv->recv();
