@@ -14,6 +14,7 @@ my $redis = AnyEvent::RipeRedis::Cluster->new(
     { host => 'localhost', port => 7001 },
     { host => 'localhost', port => 7002 },
   ],
+  scale_reads => 1,
 
   on_node_connect => sub {
     print "Connected\n";
@@ -39,6 +40,33 @@ $redis->set( 'foo', 'bar',
     print Dumper( \@_ );
     $cv->end;
   },
+);
+
+$cv->begin;
+
+$redis->get( 'foo',
+  sub {
+    print Dumper( \@_ );
+    $cv->end;
+  }
+);
+
+$cv->begin;
+
+$redis->get( 'foo',
+  sub {
+    print Dumper( \@_ );
+    $cv->end;
+  }
+);
+
+$cv->begin;
+
+$redis->get( 'foo',
+  sub {
+    print Dumper( \@_ );
+    $cv->end;
+  }
 );
 
 $cv->begin;
