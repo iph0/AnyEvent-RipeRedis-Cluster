@@ -31,12 +31,12 @@ sub new {
 
 sub host {
   my $self = shift;
-  return $self->{connector}->host;
+  return $self->{_connector}->host;
 }
 
 sub port {
   my $self = shift;
-  return $self->{connector}->port;
+  return $self->{_connector}->port;
 }
 
 sub execute {
@@ -122,3 +122,43 @@ sub _finalize {
 }
 
 1;
+__END__
+
+=head1 NAME
+
+AnyEvent::RipeRedis::Cluster::Node - Class of redis node for
+AnyEvent::RipeRedis::Cluster
+
+=head1 DESCRIPTION
+
+Class of redis node for L<AnyEvent::RipeRedis::Cluster>.
+
+=head1 CONSTRUCTOR
+
+=head2 new( %params )
+
+Creates error object.
+
+=head1 METHODS
+
+=head2 host()
+
+=head2 port()
+
+=head2 execute( $command )
+
+=head2 finalize( $cb->() )
+
+=head1 SEE ALSO
+
+L<AnyEvent::RipeRedis>
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (c) 2012-2016, Eugene Ponizovsky, E<lt>ponizovsky@gmail.comE<gt>.
+All rights reserved.
+
+This module is free software; you can redistribute it and/or modify it under
+the same terms as Perl itself.
+
+=cut
