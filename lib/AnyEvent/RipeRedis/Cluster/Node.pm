@@ -29,16 +29,6 @@ sub new {
   return $self;
 }
 
-sub host {
-  my $self = shift;
-  return $self->{_connector}->host;
-}
-
-sub port {
-  my $self = shift;
-  return $self->{_connector}->port;
-}
-
 sub execute {
   my $self = shift;
   my $cmd  = shift;
@@ -75,6 +65,16 @@ sub finalize {
   }
 
   return;
+}
+
+sub host {
+  my $self = shift;
+  return $self->{_connector}->host;
+}
+
+sub port {
+  my $self = shift;
+  return $self->{_connector}->port;
 }
 
 sub _begin {
@@ -126,7 +126,7 @@ __END__
 
 =head1 NAME
 
-AnyEvent::RipeRedis::Cluster::Node - Class of redis node for
+AnyEvent::RipeRedis::Cluster::Node - Class of Redis node for
 AnyEvent::RipeRedis::Cluster
 
 =head1 DESCRIPTION
@@ -137,21 +137,29 @@ Class of redis node for L<AnyEvent::RipeRedis::Cluster>.
 
 =head2 new( %params )
 
-Creates error object.
+Creates Redis node object.
 
 =head1 METHODS
 
-=head2 host()
-
-=head2 port()
-
 =head2 execute( $command )
+
+Execute command on Redis node.
 
 =head2 finalize( $cb->() )
 
+Finalizes Redis node.
+
+=head2 host()
+
+Get current host of the Redis node.
+
+=head2 port()
+
+Get current port of the Redis node.
+
 =head1 SEE ALSO
 
-L<AnyEvent::RipeRedis>
+L<AnyEvent::RipeRedis::Cluster>, L<AnyEvent::RipeRedis>
 
 =head1 COPYRIGHT AND LICENSE
 
