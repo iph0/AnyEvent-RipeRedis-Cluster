@@ -405,7 +405,6 @@ sub _discover_commands {
           $commands{$kwd} = $cmd_info;
         }
 
-#        $commands{eval_cashed} = $commands{eval};
         $self->{_commands} = \%commands;
 
         $cb->();
