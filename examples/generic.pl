@@ -82,23 +82,27 @@ printf ( "%x\n", AnyEvent::RipeRedis::Cluster::crc16( '123456789' ) );
   $cv->begin;
 
   $redis->get( 'foo',
-    sub {
-      print Dumper( \@_ );
-      $cv->end;
+    { on_reply => sub {
+        print Dumper( \@_ );
+        $cv->end;
+      },
+      on_node_error => sub {
+        print Dumper( \@_ );
+      },
     }
   );
 
-#  $cv->begin;
-#
-#  $redis->info(
-#    sub {
-#      my $info = shift;
-#
-#      print "$info->{redis_version}\n";
-#
-#      $cv->end;
-#    }
-#  );
+  $cv->begin;
+
+  $redis->info(
+    sub {
+      my $info = shift;
+
+      print "$info->{redis_version}\n";
+
+      $cv->end;
+    }
+  );
 
   $cv->recv();
 

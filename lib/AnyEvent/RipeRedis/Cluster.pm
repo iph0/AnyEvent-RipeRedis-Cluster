@@ -100,6 +100,7 @@ sub new {
   $self->{on_node_connect_error} = delete $params{on_node_connect_error};
   $self->{on_node_error}         = delete $params{on_node_error};
 
+  $self->{_node_params}   = \%params;
   $self->{_nodes_pool}    = {};
   $self->{_slots}         = undef;
   $self->{_commands}      = undef;
@@ -108,7 +109,6 @@ sub new {
   $self->{_ready}         = 0;
   $self->{_input_queue}   = [];
   $self->{_temp_queue}    = [];
-  $self->{_node_params}   = \%params;
 
   unless ( $self->{lazy} ) {
     $self->_init;
@@ -535,6 +535,14 @@ sub _prepare {
     }
   }
 
+  unless ( defined $cmd->{on_node_error} ) {
+    $cmd->{on_node_error} = sub {
+      if ( defined $self->{on_node_error} ) {
+        $self->{on_node_error}->(@_);
+      }
+    }
+  }
+
   return $cmd;
 }
 
@@ -590,7 +598,7 @@ sub _route {
 sub _execute {
   my $self  = shift;
   my $cmd   = shift;
-  my @nodes = shift;
+  my @nodes = @_;
 
   my $hostport;
   if ( scalar @nodes > 1 ) {
@@ -631,10 +639,8 @@ sub _execute {
         return;
       }
 
-      if ( defined $self->{on_node_error} ) {
-        my $node = $nodes_pool->{$hostport};
-        $self->{on_node_error}->( $err, $node->host, $node->port );
-      }
+      my $node = $nodes_pool->{$hostport};
+      $cmd->{on_node_error}->( $err, $node->host, $node->port );
 
       if (@nodes) {
         $self->_execute( $cmd, @nodes );
