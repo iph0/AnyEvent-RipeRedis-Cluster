@@ -531,14 +531,6 @@ sub _prepare {
     }
   }
 
-  unless ( defined $cmd->{on_node_error} ) {
-    $cmd->{on_node_error} = sub {
-      if ( defined $self->{on_node_error} ) {
-        $self->{on_node_error}->(@_);
-      }
-    }
-  }
-
   return $cmd;
 }
 
@@ -579,20 +571,16 @@ sub _route {
         }
         @{ $self->{_slots} };
 
-        if ( $cmd_info->{readonly} && $self->{use_slaves} ) {
-          @nodes = @{ $range->[2] };
-        }
-        else {
-          @nodes = ( $range->[2][0] );
-        }
+        @nodes
+            = $cmd_info->{readonly} && $self->{use_slaves}
+            ? @{ $range->[2] }
+            : $range->[2][0];
       }
       else {
-        if ( $self->{use_slaves} ) {
-          @nodes = keys %{ $self->{_nodes_pool} };
-        }
-        else {
-          @nodes = @{ $self->{_masters} };
-        }
+        @nodes
+            = $self->{use_slaves}
+            ? keys %{ $self->{_nodes_pool} }
+            : @{ $self->{_masters} };
       }
 
       $self->_execute( $cmd, @nodes );
@@ -624,8 +612,8 @@ sub _execute {
     my $err   = shift;
 
     if ( defined $err ) {
-      my $nodes_pool = $self->{_nodes_pool};
       my $err_code   = $err->code;
+      my $nodes_pool = $self->{_nodes_pool};
 
       if ( exists $SPECIAL_ERRORS{$err_code} ) {
         if ( $err_code == E_MOVED ) {
@@ -647,7 +635,12 @@ sub _execute {
       }
 
       my $node = $nodes_pool->{$hostport};
-      $cmd->{on_node_error}->( $err, $node->host, $node->port );
+      if ( defined $cmd->{on_node_error} ) {
+        $cmd->{on_node_error}->( $err, $node->host, $node->port );
+      }
+      elsif ( defined $self->{on_node_error} ) {
+        $self->{on_node_error}->( $err, $node->host, $node->port );
+      }
 
       if (@nodes) {
         $self->_execute( $cmd, @nodes );
@@ -665,6 +658,7 @@ sub _execute {
   };
 
   my $kwd = $cmd->{kwd};
+
   $node->$kwd( @{ $cmd->{args} },
     { on_reply   => $on_reply,
       on_message => $cmd->{on_message},
@@ -685,7 +679,10 @@ sub _get_key {
   my $key;
 
   if ( $cmd_info->{movablekeys} ) {
-    my @nodes = keys %{ $self->{_nodes_pool} };
+    my @nodes
+        = $self->{use_slaves}
+        ? keys %{ $self->{_nodes_pool} }
+        : @{ $self->{_masters} };
 
     $self->_execute(
       { kwd  => 'command_getkeys',
