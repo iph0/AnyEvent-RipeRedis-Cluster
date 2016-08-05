@@ -88,8 +88,8 @@ sub new {
   my $self = bless {}, $class;
 
   $self->{startup_nodes} = delete $params{startup_nodes};
-  $self->{scale_reads}
-      = exists $params{scale_reads} ? delete $params{scale_reads} : 1;
+  $self->{use_slaves}
+      = exists $params{use_slaves} ? delete $params{use_slaves} : 1;
   $self->{lazy} = delete $params{lazy};
 
   $self->refresh_interval( delete $params{refresh_interval} );
@@ -102,6 +102,7 @@ sub new {
 
   $self->{_node_params}   = \%params;
   $self->{_nodes_pool}    = {};
+  $self->{_masters}       = undef;
   $self->{_slots}         = undef;
   $self->{_commands}      = undef;
   $self->{_init_state}    = S_NEED_DO;
@@ -115,15 +116,6 @@ sub new {
   }
 
   return $self;
-}
-
-sub eval_cached { # FIXME need refactoring
-  my $self = shift;
-  my $cmd  = $self->_prepare( 'eval_cached', [@_] );
-
-  $self->_route($cmd);
-
-  return;
 }
 
 sub disconnect {
@@ -289,6 +281,7 @@ sub _process_slots {
 
   my %nodes_pool;
   my @slots;
+  my @masters;
   my @slaves;
 
   my $old_nodes_pool = $self->{_nodes_pool};
@@ -298,7 +291,7 @@ sub _process_slots {
     my $range_end   = shift @{$range};
 
     my @nodes;
-    my $is_master = 0;
+    my $is_master = 1;
 
     foreach my $node_info ( @{$range} ) {
       my $hostport = "$node_info->[0]:$node_info->[1]";
@@ -310,12 +303,14 @@ sub _process_slots {
         else {
           $nodes_pool{$hostport} = $self->_new_node( @{$node_info} );
 
-          unless ( $is_master ) {
+          unless ($is_master) {
             push( @slaves, $hostport );
           }
-          else {
-            $is_master = 0;
-          }
+        }
+
+        if ($is_master) {
+          push( @masters, $hostport );
+          $is_master = 0;
         }
       }
 
@@ -328,9 +323,10 @@ sub _process_slots {
   @slots = sort { $a->[0] <=> $b->[0] } @slots;
 
   $self->{_nodes_pool} = \%nodes_pool;
+  $self->{_masters}    = \@masters;
   $self->{_slots}      = \@slots;
 
-  if ( $self->{scale_reads} && @slaves ) {
+  if ( $self->{use_slaves} && @slaves ) {
     $self->_prepare_slaves( \@slaves, $cb );
     return;
   }
@@ -392,14 +388,14 @@ sub _discover_commands {
           my $key_pos = $cmd_raw->[3];
 
           my $cmd_info = {
-            write       => 0,
+            readonly    => 0,
             movablekeys => 0,
             key         => $key_pos,
           };
 
           foreach my $flag ( @{$flags} ) {
-            if ( $flag eq 'write' ) {
-              $cmd_info->{write} = 1;
+            if ( $flag eq 'readonly' ) {
+              $cmd_info->{readonly} = 1;
             }
             if ( $flag eq 'movablekeys' ) {
               $cmd_info->{movablekeys} = 1;
@@ -409,6 +405,7 @@ sub _discover_commands {
           $commands{$kwd} = $cmd_info;
         }
 
+#        $commands{eval_cashed} = $commands{eval};
         $self->{_commands} = \%commands;
 
         $cb->();
@@ -560,9 +557,15 @@ sub _route {
     return;
   }
 
+  my ( $kwd, @extra_args ) = split( m/_/, $cmd->{kwd} );
+  my @args = ( @extra_args, @{ $cmd->{args} } );
+  if ( $cmd->{kwd} eq 'eval_cached' ) {
+    shift @args;
+  }
+
   weaken($self);
 
-  $self->_get_key( $cmd,
+  $self->_get_key( $kwd, \@args,
     sub {
       my $key = shift;
 
@@ -570,22 +573,27 @@ sub _route {
 
       if ( defined $key ) {
         my $slot     = _get_slot($key);
-        my $cmd_info = $self->{_commands}{ $cmd->{kwd} };
+        my $cmd_info = $self->{_commands}{$kwd};
 
         my ($range) = bsearch {
           $slot > $_->[1] ? -1 : $slot < $_->[0] ? 1 : 0;
         }
         @{ $self->{_slots} };
 
-        if ( $cmd_info->{write} || !$self->{scale_reads} ) {
-          @nodes = ( $range->[2][0] );
+        if ( $cmd_info->{readonly} && $self->{use_slaves} ) {
+          @nodes = @{ $range->[2] };
         }
         else {
-          @nodes = @{ $range->[2] };
+          @nodes = ( $range->[2][0] );
         }
       }
       else {
-        @nodes = keys %{ $self->{_nodes_pool} };
+        if ( $self->{use_slaves} ) {
+          @nodes = keys %{ $self->{_nodes_pool} };
+        }
+        else {
+          @nodes = @{ $self->{_masters} };
+        }
       }
 
       $self->_execute( $cmd, @nodes );
@@ -669,19 +677,20 @@ sub _execute {
 
 sub _get_key {
   my $self = shift;
-  my $cmd  = shift;
+  my $kwd  = shift;
+  my $args = shift;
   my $cb   = shift;
 
-  my $cmd_info = $self->{_commands}{ $cmd->{kwd} };
+  my $cmd_info = $self->{_commands}{$kwd};
 
   my $key;
 
   if ( $cmd_info->{movablekeys} ) {
-    my @nodes = values %{ $self->{_nodes_pool} };
+    my @nodes = keys %{ $self->{_nodes_pool} };
 
     $self->_execute(
       { kwd  => 'command_getkeys',
-        args => [ $cmd->{kwd}, @{ $cmd->{args} } ],
+        args => [ $kwd, @{$args} ],
 
         on_reply => sub {
           my $keys = shift;
@@ -705,24 +714,12 @@ sub _get_key {
     return;
   }
   elsif ( $cmd_info->{key} > 0 ) {
-    $key = $cmd->{args}[ $cmd_info->{key} - 1 ];
+    $key = $args->[ $cmd_info->{key} - 1 ];
   }
 
   $cb->($key);
 
   return;
-}
-
-sub _get_nodes_by_slot {
-  my $self = shift;
-  my $slot = shift;
-
-  my ($range) = bsearch {
-    $slot > $_->[1] ? -1 : $slot < $_->[0] ? 1 : 0;
-  }
-  @{ $self->{_slots} };
-
-  return $range->[2];
 }
 
 sub _process_input_queue {
@@ -791,11 +788,11 @@ sub AUTOLOAD {
   our $AUTOLOAD;
   my $method = $AUTOLOAD;
   $method =~ s/^.+:://;
-  my ( $kwd, @extra_args ) = split( m/_/, lc($method) );
+  my $kwd = lc($method);
 
   my $sub = sub {
     my $self = shift;
-    my $cmd  = $self->_prepare( $kwd, [ @extra_args, @_ ] );
+    my $cmd  = $self->_prepare( $kwd, [@_] );
 
     $self->_route($cmd);
 

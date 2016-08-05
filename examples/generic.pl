@@ -17,7 +17,7 @@ printf ( "%x\n", AnyEvent::RipeRedis::Cluster::crc16( '123456789' ) );
       { host => 'localhost', port => 7002 },
     ],
   default_slot     => 1,
-  scale_reads      => 1,
+  use_slaves       => 1,
   refresh_interval => 5,
   lazy             => 1,
 
@@ -94,12 +94,19 @@ printf ( "%x\n", AnyEvent::RipeRedis::Cluster::crc16( '123456789' ) );
 
   $cv->begin;
 
+  $redis->eval_cached( 'return { KEYS[1], KEYS[2], ARGV[1], ARGV[2] }',
+      2, '{key}1', '{key}2', 'first', 'second',
+    sub {
+      print Dumper( \@_ );
+      $cv->end;
+    }
+  );
+
+  $cv->begin;
+
   $redis->info(
     sub {
-      my $info = shift;
-
-      print "$info->{redis_version}\n";
-
+      print $_[0]->{redis_version} . "\n";
       $cv->end;
     }
   );
