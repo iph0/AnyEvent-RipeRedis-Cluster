@@ -4,15 +4,35 @@ use 5.008000;
 use strict;
 use warnings;
 
-our $VERSION = '0.01';
+# TODO multi, exec, watch
 
-use AnyEvent::Redis::RipeRedis qw( :err_codes );
+our $VERSION = '0.01_01';
+
+use AnyEvent::RipeRedis;
+use AnyEvent::RipeRedis::Error;
+
 use AnyEvent::Socket;
+use Scalar::Util qw( looks_like_number weaken );
+use List::MoreUtils qw( bsearch );
+use Carp qw( croak );
 
-use Scalar::Util qw( weaken );
+our %ERROR_CODES;
+
+BEGIN {
+  our %ERROR_CODES = %AnyEvent::RipeRedis::ERROR_CODES;
+  our @EXPORT_OK   = keys %ERROR_CODES;
+  our %EXPORT_TAGS = ( err_codes => \@EXPORT_OK, );
+}
 
 use constant {
   MAX_SLOTS => 16384,
+
+  %ERROR_CODES,
+
+  # Operation status
+  S_NEED_DO      => 1,
+  S_IN_PROGRESS  => 2,
+  S_DONE         => 3,
 };
 
 my @CRC16_TAB = (
@@ -50,6 +70,16 @@ my @CRC16_TAB = (
   0x6e17, 0x7e36, 0x4e55, 0x5e74, 0x2e93, 0x3eb2, 0x0ed1, 0x1ef0,
 );
 
+my %SUB_COMMANDS = (
+  subscribe  => 1,
+  psubscribe => 1,
+);
+
+my %SPECIAL_ERRORS = (
+  (E_MOVED) => 1,
+  (E_ASK)   => 1,
+);
+
 
 sub new {
   my $class  = shift;
@@ -57,36 +87,86 @@ sub new {
 
   my $self = bless {}, $class;
 
-  $self->{startup_nodes} = $params{startup_nodes};
+  $self->{startup_nodes} = delete $params{startup_nodes};
   $self->{scale_reads}
-      = exists $params{scale_reads} ? $params{scale_reads} : 1;
-  $self->{default_node} = $params{default_node};
+      = exists $params{scale_reads} ? delete $params{scale_reads} : 1;
+  $self->{lazy} = delete $params{lazy};
 
-  $self->{on_node_connect}       = $params{on_node_connect};
-  $self->{on_node_disconnect}    = $params{on_node_disconnect};
-  $self->{on_node_connect_error} = $params{on_node_connect_error};
-  $self->{on_node_error}         = $params{on_node_error};
+  $self->refresh_interval( delete $params{refresh_interval} );
+  $self->on_error( delete $params{on_error} );
 
-  my %node_params;
-  foreach my $name ( qw( password database encoding connection_timeout
-      read_timeout lazy reconnect handle_params ) )
-  {
-    next unless defined $params{$name};
-    $node_params{$name} = $params{$name};
+  $self->{on_node_connect}       = delete $params{on_node_connect};
+  $self->{on_node_disconnect}    = delete $params{on_node_disconnect};
+  $self->{on_node_connect_error} = delete $params{on_node_connect_error};
+  $self->{on_node_error}         = delete $params{on_node_error};
+
+  $self->{_nodes_pool}    = {};
+  $self->{_slots}         = undef;
+  $self->{_commands}      = undef;
+  $self->{_init_state}    = S_NEED_DO;
+  $self->{_refresh_timer} = undef;
+  $self->{_ready}         = 0;
+  $self->{_input_queue}   = [];
+  $self->{_temp_queue}    = [];
+  $self->{_node_params}   = \%params;
+
+  unless ( $self->{lazy} ) {
+    $self->_init;
   }
-  $self->{_node_params} = \%node_params;
-
-  $self->{_nodes}        = {};
-  $self->{_slots}        = [];
-  $self->{_commands}     = {};
-  $self->{_ready}        = 0;
-  $self->{_need_refresh} = 0;
-  $self->{_input_queue}  = [];
-  $self->{_tmp_queue}    = [];
-
-  $self->_discover_cluster( [ @{ $self->{startup_nodes} } ] );
 
   return $self;
+}
+
+sub eval_cached { # FIXME need refactoring
+  my $self = shift;
+  my $cmd  = $self->_prepare( 'eval_cached', [@_] );
+
+  $self->_route($cmd);
+
+  return;
+}
+
+sub disconnect {
+  my $self = shift;
+
+  # TODO
+}
+
+sub refresh_interval {
+  my $self = shift;
+
+  if (@_) {
+    my $seconds = shift;
+
+    if ( defined $seconds
+      && ( !looks_like_number($seconds) || $seconds < 0 ) )
+    {
+      croak qq{"refresh_interval" must be a positive number};
+    }
+    $self->{refresh_interval} = $seconds;
+  }
+
+  return $self->{refresh_interval};
+}
+
+sub on_error {
+  my $self = shift;
+
+  if ( @_ ) {
+    my $on_error = shift;
+
+    if ( defined $on_error ) {
+      $self->{on_error} = $on_error;
+    }
+    else {
+      $self->{on_error} = sub {
+        my $err = shift;
+        warn $err->message . "\n";
+      };
+    }
+  }
+
+  return $self->{on_error};
 }
 
 sub crc16 {
@@ -97,7 +177,6 @@ sub crc16 {
     }
 
     my $crc = 0;
-
     foreach my $char ( split //, $str ) {
       $crc = ( $crc << 8 & 0xffff )
           ^ $CRC16_TAB[ ( ( $crc >> 8 ) ^ ord($char) ) & 0xff ];
@@ -106,97 +185,265 @@ sub crc16 {
     return $crc;
 }
 
-sub _discover_cluster {
-  my $self          = shift;
-  my $startup_nodes = shift;
+sub _init {
+  my $self  = shift;
 
-  my $node_params = _shift_random($startup_nodes);
-  my $node = $self->_prepare_node( $node_params->{host},
-      $node_params->{port} );
+  $self->{_init_state} = S_IN_PROGRESS;
+  undef $self->{_refresh_timer};
 
-  $node->cluster_slots(
+  weaken($self);
+
+  $self->_discover_slots(
     sub {
-      my $slot_ranges = shift;
+      my $err = $_[1];
 
-      $node->disconnect();
-      undef $node;
-
-      if (@_) {
-        unless ( @{$startup_nodes} ) {
-          # TODO handle error
-          # Can't discover cluster through nodes: ...
-
-          return;
-        }
-
-        $self->_discover_cluster($startup_nodes);
+      if ( defined $err ) {
+        $self->{_init_state} = S_NEED_DO;
+        $self->_abort($err);
 
         return;
       }
 
-      my $nodes = $self->{_nodes};
-      my $slots = $self->{_slots};
-      my @slave_nodes;
+      $self->{_init_state} = S_DONE;
 
-      foreach my $slot_range ( @{$slot_ranges} ) {
-        my @slot_nodes;
-        my $length = scalar @{$slot_range};
+      $self->{_ready} = 1;
+      $self->_process_input_queue;
 
-        for ( my $i = 2; $i < $length; $i++ ) {
-          my $node_params   = $slot_range->[$i];
-          my $node_hostport = "$node_params->[0]:$node_params->[1]";
-
-          unless ( defined $nodes->{$node_hostport} ) {
-            my $node = $self->_prepare_node( @{$node_params} );
-            $nodes->{$node_hostport} = $node;
-
-            if ( $i > 2 ) {
-              push( @slave_nodes, $node );
-            }
+      if ( defined $self->{refresh_interval}
+        && $self->{refresh_interval} > 0 )
+      {
+        $self->{_refresh_timer} = AE::timer(
+          $self->{refresh_interval}, 0,
+          sub {
+            $self->{_init_state} = S_NEED_DO;
+            $self->{_ready}      = 0;
           }
-
-          push( @slot_nodes, $nodes->{$node_hostport} );
-        }
-
-        for ( $slot_range->[0] .. $slot_range->[1] ) {
-          $slots->[$_] = \@slot_nodes;
-        }
+        );
       }
-
-#      if ( $self->{scale_reads} ) {
-#        $self->_prepare_slaves( \@slave_nodes );
-#      }
-#      else {
-        $self->_discover_commands( [ values %{ $self->{_nodes} } ] );
-#      }
     }
   );
 
   return;
 }
 
-sub _prepare_node {
+sub _discover_slots {
+  my $self = shift;
+  my $cb   = shift;
+
+  my $nodes_pool = $self->{_nodes_pool};
+
+  my @nodes;
+  if ( %{$nodes_pool} ) {
+    @nodes = keys %{$nodes_pool};
+  }
+  else {
+    foreach my $node_params ( @{ $self->{startup_nodes} } ) {
+      my $hostport = "$node_params->{host}:$node_params->{port}";
+
+      unless ( defined $nodes_pool->{$hostport} ) {
+        $nodes_pool->{$hostport} = $self->_new_node(
+            $node_params->{host}, $node_params->{port}, 1 );
+      }
+
+      push( @nodes, $hostport );
+    }
+  }
+
+  weaken($self);
+
+  $self->_execute(
+    { kwd  => 'cluster_slots',
+      args => [],
+
+      on_reply => sub {
+        my $slots = shift;
+        my $err   = shift;
+
+        if ( defined $err ) {
+          $cb->( undef, $err );
+          return;
+        }
+
+        $self->_process_slots( $slots,
+          sub {
+            unless ( defined $self->{_commands} ) {
+              $self->_discover_commands($cb);
+              return;
+            }
+
+            $cb->();
+          }
+        );
+      }
+    },
+    @nodes,
+  );
+
+  return;
+}
+
+sub _process_slots {
+  my $self      = shift;
+  my $slots_raw = shift;
+  my $cb        = shift;
+
+  my %nodes_pool;
+  my @slots;
+  my @slaves;
+
+  my $old_nodes_pool = $self->{_nodes_pool};
+
+  foreach my $range ( @{$slots_raw} ) {
+    my $range_start = shift @{$range};
+    my $range_end   = shift @{$range};
+
+    my @nodes;
+    my $is_master = 0;
+
+    foreach my $node_info ( @{$range} ) {
+      my $hostport = "$node_info->[0]:$node_info->[1]";
+
+      unless ( defined $nodes_pool{$hostport} ) {
+        if ( defined $old_nodes_pool->{$hostport} ) {
+          $nodes_pool{$hostport} = $old_nodes_pool->{$hostport};
+        }
+        else {
+          $nodes_pool{$hostport} = $self->_new_node( @{$node_info} );
+
+          unless ( $is_master ) {
+            push( @slaves, $hostport );
+          }
+          else {
+            $is_master = 0;
+          }
+        }
+      }
+
+      push( @nodes, $hostport );
+    }
+
+    push( @slots, [ $range_start, $range_end, \@nodes ] );
+  }
+
+  @slots = sort { $a->[0] <=> $b->[0] } @slots;
+
+  $self->{_nodes_pool} = \%nodes_pool;
+  $self->{_slots}      = \@slots;
+
+  if ( $self->{scale_reads} && @slaves ) {
+    $self->_prepare_slaves( \@slaves, $cb );
+    return;
+  }
+
+  $cb->();
+
+  return;
+}
+
+sub _prepare_slaves {
+  my $self   = shift;
+  my $slaves = shift;
+  my $cb     = shift;
+
+  my $reply_cnt = scalar @{$slaves};
+
+  my $cmd = {
+    kwd  => 'readonly',
+    args => [],
+
+    on_reply => sub {
+      return unless --$reply_cnt == 0;
+      $cb->();
+    }
+  };
+
+  foreach my $hostport ( @{$slaves} ) {
+    $self->_execute( $cmd, $hostport );
+  }
+
+  return;
+}
+
+sub _discover_commands {
+  my $self = shift;
+  my $cb   = shift;
+
+  weaken($self);
+  my @nodes = keys %{ $self->{_nodes_pool} };
+
+  $self->_execute(
+    { kwd  => 'command',
+      args => [],
+
+      on_reply => sub {
+        my $commands_raw = shift;
+        my $err          = shift;
+
+        if ( defined $err ) {
+          $cb->( undef, $err);
+          return;
+        }
+
+        my %commands;
+
+        foreach my $cmd_raw ( @{$commands_raw} ) {
+          my $kwd     = lc( $cmd_raw->[0] );
+          my $flags   = $cmd_raw->[2];
+          my $key_pos = $cmd_raw->[3];
+
+          my $cmd_info = {
+            write       => 0,
+            movablekeys => 0,
+            key         => $key_pos,
+          };
+
+          foreach my $flag ( @{$flags} ) {
+            if ( $flag eq 'write' ) {
+              $cmd_info->{write} = 1;
+            }
+            if ( $flag eq 'movablekeys' ) {
+              $cmd_info->{movablekeys} = 1;
+            }
+          }
+
+          $commands{$kwd} = $cmd_info;
+        }
+
+        $self->{_commands} = \%commands;
+
+        $cb->();
+      }
+    },
+    @nodes,
+  );
+
+  return;
+}
+
+sub _new_node {
   my $self = shift;
   my $host = shift;
   my $port = shift;
+  my $lazy = shift;
 
-  return AnyEvent::Redis::RipeRedis->new(
+  return AnyEvent::RipeRedis->new(
     %{ $self->{_node_params} },
     host             => $host,
     port             => $port,
-    on_connect       => $self->_get_on_node_connect( $host, $port ),
-    on_disconnect    => $self->_get_on_node_disconnect( $host, $port ),
-    on_connect_error => $self->_get_on_node_connect_error( $host, $port ),
-    on_error         => $self->_get_on_node_error( $host, $port ),
+    lazy             => $lazy,
+    on_connect       => $self->_create_on_node_connect( $host, $port ),
+    on_disconnect    => $self->_create_on_node_disconnect( $host, $port ),
+    on_connect_error => $self->_create_on_node_connect_error( $host, $port ),
+    on_error         => $self->_create_on_node_error( $host, $port ),
   );
 }
 
-sub _get_on_node_connect {
+sub _create_on_node_connect {
   my $self = shift;
   my $host = shift;
   my $port = shift;
 
-  weaken( $self );
+  weaken($self);
 
   return sub {
     if ( defined $self->{on_node_connect} ) {
@@ -205,12 +452,12 @@ sub _get_on_node_connect {
   };
 }
 
-sub _get_on_node_disconnect {
+sub _create_on_node_disconnect {
   my $self = shift;
   my $host = shift;
   my $port = shift;
 
-  weaken( $self );
+  weaken($self);
 
   return sub {
     if ( defined $self->{on_node_disconnect} ) {
@@ -219,360 +466,308 @@ sub _get_on_node_disconnect {
   };
 }
 
-sub _get_on_node_connect_error {
+sub _create_on_node_connect_error {
   my $self = shift;
   my $host = shift;
   my $port = shift;
 
-  weaken( $self );
+  weaken($self);
 
   return sub {
-    my $err_msg = shift;
+    my $err = shift;
 
     if ( defined $self->{on_node_connect_error} ) {
-      $self->{on_node_connect_error}->( $host, $port, $err_msg );
+      $self->{on_node_connect_error}->( $err, $host, $port );
     }
   };
 }
 
-sub _get_on_node_error {
+sub _create_on_node_error {
   my $self = shift;
   my $host = shift;
   my $port = shift;
 
-  weaken( $self );
+  weaken($self);
 
   return sub {
-    my $err_msg = shift;
-    my $err_code = shift;
+    my $err = shift;
 
     if ( defined $self->{on_node_error} ) {
-      $self->{on_node_error}->( $host, $port, $err_msg, $err_code );
+      $self->{on_node_error}->( $err, $host, $port );
     }
   };
 }
 
-sub _prepare_slaves {
-  my $self        = shift;
-  my $slave_nodes = shift;
+sub _prepare {
+  my $self = shift;
+  my $kwd  = shift;
+  my $args = shift;
 
-  my $total_slaves = scalar @{$slave_nodes};
-  my $done_cnt     = 0;
+  weaken($self);
 
-  my $cb = sub {
-    my $err_msg = $_[1];
-
-    if ( defined $err_msg ) {
-      # TODO handle error
-    }
-
-    return if ++$done_cnt < $total_slaves;
-
-    $self->_discover_commands( [ values %{ $self->{_nodes} } ] );
-  };
-
-  foreach my $node ( @{$slave_nodes} ) {
-    $node->readonly($cb);
+  my $cmd;
+  if ( ref( $args->[-1] ) eq 'HASH' ) {
+    $cmd = pop @{$args};
   }
+  else {
+    $cmd = {};
+    if ( ref( $args->[-1] ) eq 'CODE' ) {
+      if ( exists $SUB_COMMANDS{$kwd} ) {
+        $cmd->{on_message} = pop @{$args};
+      }
+      else {
+        $cmd->{on_reply} = pop @{$args};
+      }
+    }
+  }
+  $cmd->{kwd}  = $kwd;
+  $cmd->{args} = $args;
 
-  return;
-}
+  unless ( defined $cmd->{on_reply} ) {
+    $cmd->{on_reply} = sub {
+      my $reply = shift;
+      my $err   = shift;
 
-sub _discover_commands {
-  my $self  = shift;
-  my $nodes = shift;
-
-  my $node = _shift_random($nodes);
-
-  $node->command(
-    sub {
-      my $cmds_info = shift;
-
-      if (@_) {
-         unless ( @{$nodes} ) {
-          # TODO handle error
-          # Can't discover commands through nodes: ...
-
-          return;
-        }
-
-        $self->_discover_commands($nodes);
-
+      if ( defined $err ) {
+        $self->{on_error}->( $err, $reply );
         return;
       }
-
-      my $commands = $self->{_commands};
-
-      foreach my $cmd_info ( @{$cmds_info} ) {
-        my $keyword = lc( $cmd_info->[0] );
-
-        my $write_flag       = 0;
-        my $movablekeys_flag = 0;
-
-        foreach my $flag ( @{ $cmd_info->[2] } ) {
-          if ( $flag eq 'write' ) {
-            $write_flag = 1;
-          }
-          elsif ( $flag eq 'movablekeys' ) {
-            $movablekeys_flag = 1;
-          }
-        }
-
-        $commands->{$keyword} = {
-          write         => $write_flag,
-          movablekeys   => $movablekeys_flag,
-          first_key_pos => $cmd_info->[3],
-        };
-      }
-
-      $self->{_ready} = 1;
-      $self->_flush_input_queue();
     }
-  );
+  }
 
-  return;
+  return $cmd;
 }
 
-sub _execute_cmd {
+sub _route {
   my $self = shift;
   my $cmd  = shift;
 
-  if ( $self->{_need_refresh} ) {
-    # $self->_discover_cluster( [ @{ $self->{startup_nodes} } ] );
-  }
-
   unless ( $self->{_ready} ) {
+    if ( $self->{_init_state} == S_NEED_DO ) {
+      $self->_init;
+    }
+
     push( @{ $self->{_input_queue} }, $cmd );
 
     return;
   }
 
-  my $cmd_info = $self->{_commands}{ $cmd->{kwd} };
+  weaken($self);
 
-  $self->_get_first_key( $cmd,
+  $self->_get_key( $cmd,
     sub {
-      my $first_key = shift;
+      my $key = shift;
 
-      if (@_) {
-        # TODO handle error
+      my @nodes;
 
-        return;
+      if ( defined $key ) {
+        my $slot     = _get_slot($key);
+        my $cmd_info = $self->{_commands}{ $cmd->{kwd} };
+
+        my ($range) = bsearch {
+          $slot > $_->[1] ? -1 : $slot < $_->[0] ? 1 : 0;
+        }
+        @{ $self->{_slots} };
+
+        if ( $cmd_info->{write} || !$self->{scale_reads} ) {
+          @nodes = ( $range->[2][0] );
+        }
+        else {
+          @nodes = @{ $range->[2] };
+        }
+      }
+      else {
+        @nodes = keys %{ $self->{_nodes_pool} };
       }
 
-      $self->_route_to_node( $cmd, $first_key );
+      $self->_execute( $cmd, @nodes );
     }
   );
 
   return;
 }
 
-sub _get_first_key {
+sub _execute {
+  my $self  = shift;
+  my $cmd   = shift;
+  my @nodes = shift;
+
+  my $hostport;
+  if ( scalar @nodes > 1 ) {
+    my $rand_index = int( rand( scalar @nodes ) );
+    $hostport = splice( @nodes, $rand_index, 1 );
+  }
+  else {
+    $hostport = shift @nodes;
+  }
+  my $node = $self->{_nodes_pool}{$hostport};
+
+  weaken($self);
+
+  my $on_reply = sub {
+    my $reply = shift;
+    my $err   = shift;
+
+    if ( defined $err ) {
+      my $nodes_pool = $self->{_nodes_pool};
+      my $err_code   = $err->code;
+
+      if ( exists $SPECIAL_ERRORS{$err_code} ) {
+        if ( $err_code == E_MOVED ) {
+          $self->{_init_state} = S_NEED_DO;
+          $self->{_ready}      = 0;
+        }
+
+        my ( $slot, $fwd_hostport )
+            = ( split( m/\s+/, $err->message ) )[ 1, 2 ];
+
+        unless ( defined $nodes_pool->{$fwd_hostport} ) {
+          my ( $host, $port ) = parse_hostport($fwd_hostport);
+          $nodes_pool->{$fwd_hostport} = $self->_new_node( $host, $port );
+        }
+
+        $self->_execute( $cmd, $fwd_hostport );
+
+        return;
+      }
+
+      if ( defined $self->{on_node_error} ) {
+        my $node = $nodes_pool->{$hostport};
+        $self->{on_node_error}->( $err, $node->host, $node->port );
+      }
+
+      if (@nodes) {
+        $self->_execute( $cmd, @nodes );
+        return;
+      }
+
+      $cmd->{on_reply}->( $reply, $err );
+
+      return;
+    }
+
+    $cmd->{on_reply}->($reply);
+
+    return;
+  };
+
+  my $kwd = $cmd->{kwd};
+  $node->$kwd( @{ $cmd->{args} },
+    { on_reply   => $on_reply,
+      on_message => $cmd->{on_message},
+    }
+  );
+
+  return;
+}
+
+sub _get_key {
   my $self = shift;
   my $cmd  = shift;
   my $cb   = shift;
 
   my $cmd_info = $self->{_commands}{ $cmd->{kwd} };
 
+  my $key;
+
   if ( $cmd_info->{movablekeys} ) {
-    my @nodes = @{ $self->{_nodes} };
+    my @nodes = values %{ $self->{_nodes_pool} };
 
-    $self->_command_getkeys( \@nodes, $cmd,
-      sub {
-        my $keys = shift;
+    $self->_execute(
+      { kwd  => 'command_getkeys',
+        args => [ $cmd->{kwd}, @{ $cmd->{args} } ],
 
-        if (@_) {
-          $cb->( undef, @_ );
+        on_reply => sub {
+          my $keys = shift;
+          my $err  = shift;
 
-          return;
+          if ( defined $err ) {
+            $cb->( undef, $err );
+            return;
+          }
+
+          if ( @{$keys} ) {
+            $key = $keys->[0];
+          }
+
+          $cb->($key);
         }
-
-        $cb->( @{$keys} ? $keys->[0] : () );
-      }
+      },
+      @nodes,
     );
-  }
-  else {
-    if ( $cmd_info->{first_key_pos} > 0 ) {
-      my $key = $cmd->{args}[ $cmd_info->{first_key_pos} - 1 ];
 
-      $cb->($key);
-    }
-    else {
-      $cb->();
-    }
+    return;
   }
+  elsif ( $cmd_info->{key} > 0 ) {
+    $key = $cmd->{args}[ $cmd_info->{key} - 1 ];
+  }
+
+  $cb->($key);
 
   return;
 }
 
-sub _command_getkeys {
-  my $self  = shift;
-  my $nodes = shift;
-  my $cmd   = shift;
-  my $cb    = shift;
-
-  my $node = _shift_random($nodes);
-
-  $node->command_getkeys( $cmd->{kwd}, @{ $cmd->{args} },
-    sub {
-      my $keys = shift;
-
-      if (@_) {
-         unless ( @{$nodes} ) {
-          $cb->( undef, @_ );
-
-          return;
-        }
-
-        $self->_command_getkeys( $nodes, $cmd );
-
-        return;
-      }
-
-      $cb->($keys);
-    }
-  );
-
-  return;
-}
-
-sub _route_to_node {
+sub _get_nodes_by_slot {
   my $self = shift;
-  my $cmd  = shift;
-  my $key  = shift;
+  my $slot = shift;
 
-  if ( defined $key ) {
-    my $slot     = _get_slot_by_key($key);
-    my $cmd_info = $self->{_commands}{ $cmd->{kwd} };
-
-    if ( $cmd_info->{write} || !$self->{scale_reads} ) {
-      $self->_execute_on_node( $self->{_slots}[$slot][0], $cmd );
-    }
-    else {
-      my @nodes = @{ $self->{_slots}[$slot] };
-      $self->_execute_on_random_node( \@nodes, $cmd );
-    }
+  my ($range) = bsearch {
+    $slot > $_->[1] ? -1 : $slot < $_->[0] ? 1 : 0;
   }
-  else {
-    my @nodes = @{ $self->{_nodes} };
-    $self->_execute_on_random_node( \@nodes, $cmd );
-  }
+  @{ $self->{_slots} };
 
-  return;
+  return $range->[2];
 }
 
-sub _execute_on_random_node {
-  my $self  = shift;
-  my $nodes = shift;
-  my $cmd   = shift;
-
-  my $node = _shift_random($nodes);
-  my $kwd  = $cmd->{kwd};
-  my $cb   = $cmd->{cb};
-
-  $cmd->{cb} = sub {
-    my $data = shift;
-
-    if (@_) {
-       unless ( @{$nodes} ) {
-        # TODO handle error
-        # Can't discover commands through nodes: ...
-
-        return;
-      }
-
-      $self->_execute_on_random_node( $nodes, $cmd );
-
-      return;
-    }
-
-    $cb->($data);
-  };
-
-  $self->_execute_on_node( $node, $cmd );
-
-  return;
-}
-
-sub _execute_on_node {
-  my $self  = shift;
-  my $node  = shift;
-  my $cmd   = shift;
-
-  my $kwd = $cmd->{kwd};
-
-  $node->$kwd( @{$cmd->{args}},
-    sub {
-      my $data = shift;
-
-      if (@_) {
-        my $err_msg  = shift;
-        my $err_code = shift;
-
-        if ( $err_code == E_MOVED || $err_code == E_ASK ) {
-          my ( $slot, $node_hostport ) = ( split( m/\s/, $err_msg ) )[ 1, 2 ];
-
-          unless ( defined $self->{_nodes}{$node_hostport} ) {
-            my ( $host, $port ) = parse_hostport( $node_hostport );
-            $self->{_nodes}{$node_hostport}
-                = $self->_prepare_node( $host, $port );
-          }
-
-          my $node = $self->{_nodes}{$node_hostport};
-
-          if ( $err_code == E_MOVED ) {
-            $self->{_slots}[$slot] = [$node];
-            $self->{_need_refresh} = 1;
-          }
-
-          $self->_execute_on_node( $node, $cmd );
-        }
-        else {
-          # TODO handle error
-          use Data::Dumper;
-          print Dumper(@_);
-        }
-
-        return;
-      }
-
-      $cmd->{cb}->($data);
-    }
-  );
-
-  return;
-}
-
-sub _flush_input_queue {
+sub _process_input_queue {
   my $self = shift;
 
-  $self->{_tmp_queue}   = $self->{_input_queue};
+  $self->{_temp_queue}  = $self->{_input_queue};
   $self->{_input_queue} = [];
 
-  while ( my $cmd = shift @{ $self->{_tmp_queue} } ) {
-    $self->_execute_cmd($cmd);
+  while ( my $cmd = shift @{ $self->{_temp_queue} } ) {
+    $self->_route($cmd);
   }
 
   return;
 }
 
-sub _abort_all {
+sub _abort {
   my $self = shift;
+  my $err  = shift;
+
+  my @queued_commands = $self->_queued_commands;
+
+  $self->{_input_queue} = [];
+  $self->{_temp_queue}  = [];
+
+  if ( defined $err ) {
+    my $err_msg  = $err->message;
+    my $err_code = $err->code;
+
+    $self->{on_error}->($err);
+
+    foreach my $cmd (@queued_commands) {
+      my $err = AnyEvent::RipeRedis::Error->new(
+        qq{Operation "$cmd->{kwd}" aborted: $err_msg}, $err_code );
+
+      $cmd->{on_reply}->( undef, $err );
+    }
+  }
 
   return;
 }
 
-sub _shift_random {
-  my $nodes = shift;
+sub _queued_commands {
+  my $self = shift;
 
-  my $node_num = int( rand( scalar @{$nodes} ) );
-  my $node     = $nodes->[$node_num];
-  $nodes->[$node_num] = $nodes->[0];
-  shift @{$nodes};
-
-  return $node;
+  return (
+    @{ $self->{_temp_queue} },
+    @{ $self->{_input_queue} },
+  );
 }
 
-sub _get_slot_by_key {
+sub _get_slot {
   my $key = shift;
 
   my $tag = $key;
@@ -590,19 +785,13 @@ sub AUTOLOAD {
   our $AUTOLOAD;
   my $method = $AUTOLOAD;
   $method =~ s/^.+:://;
-  my ( $kwd, @args ) = split( m/_/, lc($method) );
+  my ( $kwd, @extra_args ) = split( m/_/, lc($method) );
 
   my $sub = sub {
     my $self = shift;
-    my $cb   = pop;
+    my $cmd  = $self->_prepare( $kwd, [ @extra_args, @_ ] );
 
-    my $cmd = {
-      kwd  => $kwd,
-      args => [ @args, @_ ],
-      cb   => $cb,
-    };
-
-    $self->_execute_cmd($cmd);
+    $self->_route($cmd);
 
     return;
   };
@@ -613,6 +802,21 @@ sub AUTOLOAD {
   };
 
   goto &{$sub};
+}
+
+sub DESTROY {
+  my $self = shift;
+
+  if ( defined $self->{_input_queue} ) {
+    my @queued_commands = $self->_queued_commands;
+
+    foreach my $cmd (@queued_commands) {
+      warn "Operation \"$cmd->{kwd}\" aborted:"
+          . " Client object destroyed prematurely.\n";
+    }
+  }
+
+  return;
 }
 
 1;
