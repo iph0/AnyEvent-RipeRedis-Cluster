@@ -17,7 +17,7 @@ printf ( "%x\n", AnyEvent::RipeRedis::Cluster::crc16( '123456789' ) );
       { host => 'localhost', port => 7002 },
     ],
   default_slot     => 1,
-  use_slaves       => 1,
+  allow_slaves     => 1,
   refresh_interval => 5,
   lazy             => 1,
 
@@ -79,9 +79,53 @@ printf ( "%x\n", AnyEvent::RipeRedis::Cluster::crc16( '123456789' ) );
     }
   );
 
+#  $cv->begin;
+#
+#  $redis->eval_cached( 'return { KEYS[1], KEYS[2], ARGV[1], ARGV[2] }',
+#      2, '{key}1', '{key}2', 'first', 'second',
+#    sub {
+#      print Dumper( \@_ );
+#      $cv->end;
+#    }
+#  );
+
   $cv->begin;
 
+  $redis->info(
+    sub {
+      print $_[0]->{redis_version} . "\n";
+      $cv->end;
+    }
+  );
+
+  $cv->begin;
+
+  $redis->watch( 'foo831',
+    sub {
+      print Dumper( \@_ );
+    },
+  );
+  $redis->multi(
+    sub {
+      print Dumper( \@_ );
+    }
+  );
   $redis->get( 'foo',
+    sub {
+      print Dumper( \@_ );
+    }
+  );
+  #$redis->multi(
+  #  sub {
+  #    print Dumper( \@_ );
+  #  }
+  #);
+  $redis->get( 'foo',
+    sub {
+      print Dumper( \@_ );
+    }
+  );
+  $redis->exec(
     { on_reply => sub {
         print Dumper( \@_ );
         $cv->end;
@@ -94,20 +138,14 @@ printf ( "%x\n", AnyEvent::RipeRedis::Cluster::crc16( '123456789' ) );
 
   $cv->begin;
 
-  $redis->eval_cached( 'return { KEYS[1], KEYS[2], ARGV[1], ARGV[2] }',
-      2, '{key}1', '{key}2', 'first', 'second',
-    sub {
-      print Dumper( \@_ );
-      $cv->end;
-    }
-  );
-
-  $cv->begin;
-
-  $redis->info(
-    sub {
-      print $_[0]->{redis_version} . "\n";
-      $cv->end;
+  $redis->get( 'foo',
+    { on_reply => sub {
+        print Dumper( \@_ );
+        $cv->end;
+      },
+      on_node_error => sub {
+        print Dumper( \@_ );
+      },
     }
   );
 

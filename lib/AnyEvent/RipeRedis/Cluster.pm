@@ -4,12 +4,9 @@ use 5.008000;
 use strict;
 use warnings;
 
-# TODO multi, exec, watch
-
 our $VERSION = '0.01_01';
 
 use AnyEvent::RipeRedis;
-use AnyEvent::RipeRedis::Error;
 
 use AnyEvent::Socket;
 use Scalar::Util qw( looks_like_number weaken );
@@ -75,11 +72,6 @@ my %SUB_COMMANDS = (
   psubscribe => 1,
 );
 
-my %SPECIAL_ERRORS = (
-  (E_MOVED) => 1,
-  (E_ASK)   => 1,
-);
-
 
 sub new {
   my $class  = shift;
@@ -88,8 +80,8 @@ sub new {
   my $self = bless {}, $class;
 
   $self->{startup_nodes} = delete $params{startup_nodes};
-  $self->{use_slaves}
-      = exists $params{use_slaves} ? delete $params{use_slaves} : 1;
+  $self->{allow_slaves}
+      = exists $params{allow_slaves} ? delete $params{allow_slaves} : 1;
   $self->{lazy} = delete $params{lazy};
 
   $self->refresh_interval( delete $params{refresh_interval} );
@@ -100,16 +92,18 @@ sub new {
   $self->{on_node_connect_error} = delete $params{on_node_connect_error};
   $self->{on_node_error}         = delete $params{on_node_error};
 
-  $self->{_node_params}   = \%params;
-  $self->{_nodes_pool}    = {};
-  $self->{_masters}       = undef;
-  $self->{_slots}         = undef;
-  $self->{_commands}      = undef;
-  $self->{_init_state}    = S_NEED_DO;
-  $self->{_refresh_timer} = undef;
-  $self->{_ready}         = 0;
-  $self->{_input_queue}   = [];
-  $self->{_temp_queue}    = [];
+  $self->{_node_params}    = \%params;
+  $self->{_nodes_pool}     = {};
+  $self->{_masters}        = undef;
+  $self->{_slots}          = undef;
+  $self->{_commands}       = undef;
+  $self->{_init_state}     = S_NEED_DO;
+  $self->{_refresh_timer}  = undef;
+  $self->{_ready}          = 0;
+  $self->{_input_queue}    = [];
+  $self->{_temp_queue}     = [];
+  $self->{_deferred_multi} = undef;
+  $self->{_forced_slot}    = undef;
 
   unless ( $self->{lazy} ) {
     $self->_init;
@@ -244,8 +238,8 @@ sub _discover_slots {
   weaken($self);
 
   $self->_execute(
-    { kwd  => 'cluster_slots',
-      args => [],
+    { method => 'cluster_slots',
+      args   => [],
 
       on_reply => sub {
         my $slots = shift;
@@ -326,7 +320,7 @@ sub _process_slots {
   $self->{_masters}    = \@masters;
   $self->{_slots}      = \@slots;
 
-  if ( $self->{use_slaves} && @slaves ) {
+  if ( $self->{allow_slaves} && @slaves ) {
     $self->_prepare_slaves( \@slaves, $cb );
     return;
   }
@@ -344,8 +338,8 @@ sub _prepare_slaves {
   my $reply_cnt = scalar @{$slaves};
 
   my $cmd = {
-    kwd  => 'readonly',
-    args => [],
+    method => 'readonly',
+    args   => [],
 
     on_reply => sub {
       return unless --$reply_cnt == 0;
@@ -368,8 +362,8 @@ sub _discover_commands {
   my @nodes = keys %{ $self->{_nodes_pool} };
 
   $self->_execute(
-    { kwd  => 'command',
-      args => [],
+    { method => 'command',
+      args   => [],
 
       on_reply => sub {
         my $commands_raw = shift;
@@ -403,6 +397,12 @@ sub _discover_commands {
           }
 
           $commands{$kwd} = $cmd_info;
+        }
+
+        $commands{watch}{forcing_slot} = 1;
+
+        foreach my $kwd ( qw( exec discard unwatch ) ) {
+          $commands{$kwd}{unforcing_slot} = 1;
         }
 
         $self->{_commands} = \%commands;
@@ -495,29 +495,40 @@ sub _create_on_node_error {
 }
 
 sub _prepare {
-  my $self = shift;
-  my $kwd  = shift;
-  my $args = shift;
+  my $self   = shift;
+  my $method = shift;
+  my $args   = shift;
 
   weaken($self);
 
-  my $cmd;
+  my $cbs;
   if ( ref( $args->[-1] ) eq 'HASH' ) {
-    $cmd = pop @{$args};
+    $cbs = pop @{$args};
   }
   else {
-    $cmd = {};
+    $cbs = {};
     if ( ref( $args->[-1] ) eq 'CODE' ) {
-      if ( exists $SUB_COMMANDS{$kwd} ) {
-        $cmd->{on_message} = pop @{$args};
+      if ( exists $SUB_COMMANDS{$method} ) {
+        $cbs->{on_message} = pop @{$args};
       }
       else {
-        $cmd->{on_reply} = pop @{$args};
+        $cbs->{on_reply} = pop @{$args};
       }
     }
   }
-  $cmd->{kwd}  = $kwd;
-  $cmd->{args} = $args;
+
+  my ( $kwd, @kwd_args ) = split( m/_/, lc($method) );
+  if ( $method eq 'eval_cached' ) {
+    undef @kwd_args;
+  }
+
+  my $cmd = {
+    kwd      => $kwd,
+    method   => $method,
+    kwd_args => \@kwd_args,
+    args     => $args,
+    %{$cbs},
+  };
 
   unless ( defined $cmd->{on_reply} ) {
     $cmd->{on_reply} = sub {
@@ -548,23 +559,32 @@ sub _route {
     return;
   }
 
-  my ( $kwd, @extra_args ) = split( m/_/, $cmd->{kwd} );
-  my @args = ( @extra_args, @{ $cmd->{args} } );
-  if ( $cmd->{kwd} eq 'eval_cached' ) {
-    shift @args;
+  if ( $cmd->{kwd} eq 'multi'
+    && !defined $self->{_forced_slot} )
+  {
+    $self->{_deferred_multi} = $cmd;
+    return;
   }
 
   weaken($self);
 
-  $self->_get_key( $kwd, \@args,
+  $self->_get_route( $cmd,
     sub {
-      my $key = shift;
+      my $slot         = shift;
+      my $allow_slaves = shift;
 
       my @nodes;
 
-      if ( defined $key ) {
-        my $slot     = _get_slot($key);
-        my $cmd_info = $self->{_commands}{$kwd};
+      if ( defined $slot ) {
+        if ( defined $self->{_deferred_multi} ) {
+          my $multi = $self->{_deferred_multi};
+          undef $self->{_deferred_multi};
+
+          $self->_route($multi);
+          $self->_route($cmd);
+
+          return;
+        }
 
         my ($range) = bsearch {
           $slot > $_->[1] ? -1 : $slot < $_->[0] ? 1 : 0;
@@ -572,13 +592,13 @@ sub _route {
         @{ $self->{_slots} };
 
         @nodes
-            = $cmd_info->{readonly} && $self->{use_slaves}
+            = $allow_slaves
             ? @{ $range->[2] }
             : $range->[2][0];
       }
       else {
         @nodes
-            = $self->{use_slaves}
+            = $allow_slaves
             ? keys %{ $self->{_nodes_pool} }
             : @{ $self->{_masters} };
       }
@@ -603,7 +623,8 @@ sub _execute {
   else {
     $hostport = shift @nodes;
   }
-  my $node = $self->{_nodes_pool}{$hostport};
+  my $node        = $self->{_nodes_pool}{$hostport};
+  my $forced_slot = $self->{_forced_slot};
 
   weaken($self);
 
@@ -615,7 +636,9 @@ sub _execute {
       my $err_code   = $err->code;
       my $nodes_pool = $self->{_nodes_pool};
 
-      if ( exists $SPECIAL_ERRORS{$err_code} ) {
+      if ( ( $err_code == E_MOVED || $err_code == E_ASK )
+        && !defined $forced_slot )
+      {
         if ( $err_code == E_MOVED ) {
           $self->{_init_state} = S_NEED_DO;
           $self->{_ready}      = 0;
@@ -634,15 +657,14 @@ sub _execute {
         return;
       }
 
-      my $node = $nodes_pool->{$hostport};
-      if ( defined $cmd->{on_node_error} ) {
-        $cmd->{on_node_error}->( $err, $node->host, $node->port );
-      }
-      elsif ( defined $self->{on_node_error} ) {
-        $self->{on_node_error}->( $err, $node->host, $node->port );
+      my $on_node_error = $cmd->{on_node_error} || $self->{on_node_error};
+
+      if ( defined $on_node_error ) {
+        my $node = $nodes_pool->{$hostport};
+        $on_node_error->( $err, $node->host, $node->port );
       }
 
-      if (@nodes) {
+      if ( !defined $forced_slot && @nodes ) {
         $self->_execute( $cmd, @nodes );
         return;
       }
@@ -657,11 +679,57 @@ sub _execute {
     return;
   };
 
-  my $kwd = $cmd->{kwd};
+  my $method = $cmd->{method};
 
-  $node->$kwd( @{ $cmd->{args} },
-    { on_reply   => $on_reply,
-      on_message => $cmd->{on_message},
+  $node->$method( @{ $cmd->{args} },
+    { on_reply => $on_reply,
+
+      defined $cmd->{on_message}
+      ? ( on_message => $cmd->{on_message} )
+      : (),
+    }
+  );
+
+  return;
+}
+
+sub _get_route {
+  my $self = shift;
+  my $cmd  = shift;
+  my $cb   = shift;
+
+  my $cmd_info = $self->{_commands}{ $cmd->{kwd} };
+
+  if ( defined $self->{_forced_slot} ) {
+    my $slot = $self->{_forced_slot};
+
+    if ( $cmd_info->{unforcing_slot} ) {
+      undef $self->{_forced_slot};
+    }
+
+    $cb->( $slot, undef );
+
+    return;
+  }
+
+  $self->_get_key( $cmd,
+    sub {
+      my $key = shift;
+
+      unless ( defined $key ) {
+        $cb->( undef, $self->{allow_slaves} );
+        return;
+      }
+
+      my $slot = _get_slot($key);
+
+      if ( $cmd_info->{forcing_slot}
+        || defined $self->{_deferred_multi} )
+      {
+        $self->{_forced_slot} = $slot;
+      }
+
+      $cb->( $slot, $self->{allow_slaves} && $cmd_info->{readonly} );
     }
   );
 
@@ -670,30 +738,32 @@ sub _execute {
 
 sub _get_key {
   my $self = shift;
-  my $kwd  = shift;
-  my $args = shift;
+  my $cmd  = shift;
   my $cb   = shift;
 
+  my $kwd      = $cmd->{kwd};
+  my @args     = ( @{ $cmd->{kwd_args} }, @{ $cmd->{args} } );
   my $cmd_info = $self->{_commands}{$kwd};
 
   my $key;
 
   if ( $cmd_info->{movablekeys} ) {
     my @nodes
-        = $self->{use_slaves}
+        = $self->{allow_slaves}
         ? keys %{ $self->{_nodes_pool} }
         : @{ $self->{_masters} };
 
     $self->_execute(
-      { kwd  => 'command_getkeys',
-        args => [ $kwd, @{$args} ],
+      { method        => 'command_getkeys',
+        args          => [ $kwd, @args ],
+        on_node_error => $cmd->{on_node_error},
 
         on_reply => sub {
           my $keys = shift;
           my $err  = shift;
 
           if ( defined $err ) {
-            $cb->( undef, $err );
+            $cmd->{on_reply}->( undef, $err );
             return;
           }
 
@@ -710,7 +780,7 @@ sub _get_key {
     return;
   }
   elsif ( $cmd_info->{key} > 0 ) {
-    $key = $args->[ $cmd_info->{key} - 1 ];
+    $key = $args[ $cmd_info->{key} - 1 ];
   }
 
   $cb->($key);
@@ -784,11 +854,10 @@ sub AUTOLOAD {
   our $AUTOLOAD;
   my $method = $AUTOLOAD;
   $method =~ s/^.+:://;
-  my $kwd = lc($method);
 
   my $sub = sub {
     my $self = shift;
-    my $cmd  = $self->_prepare( $kwd, [@_] );
+    my $cmd  = $self->_prepare( $method, [@_] );
 
     $self->_route($cmd);
 
