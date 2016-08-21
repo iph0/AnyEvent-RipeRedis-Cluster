@@ -107,7 +107,7 @@ printf ( "%x\n", AnyEvent::RipeRedis::Cluster::crc16( '123456789' ) );
   );
   $redis->multi(
     sub {
-      print Dumper( \@_ );
+      print 'multi -> ' . Dumper( \@_ );
     }
   );
   $redis->get( 'foo',

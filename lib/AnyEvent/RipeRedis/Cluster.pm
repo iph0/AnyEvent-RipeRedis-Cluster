@@ -92,18 +92,18 @@ sub new {
   $self->{on_node_connect_error} = delete $params{on_node_connect_error};
   $self->{on_node_error}         = delete $params{on_node_error};
 
-  $self->{_node_params}    = \%params;
-  $self->{_nodes_pool}     = {};
-  $self->{_masters}        = undef;
-  $self->{_slots}          = undef;
-  $self->{_commands}       = undef;
-  $self->{_init_state}     = S_NEED_DO;
-  $self->{_refresh_timer}  = undef;
-  $self->{_ready}          = 0;
-  $self->{_input_queue}    = [];
-  $self->{_temp_queue}     = [];
-  $self->{_deferred_multi} = undef;
-  $self->{_forced_slot}    = undef;
+  $self->{_node_params}   = \%params;
+  $self->{_nodes_pool}    = {};
+  $self->{_masters}       = undef;
+  $self->{_slots}         = undef;
+  $self->{_commands}      = undef;
+  $self->{_init_state}    = S_NEED_DO;
+  $self->{_refresh_timer} = undef;
+  $self->{_ready}         = 0;
+  $self->{_input_queue}   = [];
+  $self->{_temp_queue}    = [];
+  $self->{_need_multi}    = 0;
+  $self->{_forced_slot}   = undef;
 
   unless ( $self->{lazy} ) {
     $self->_init;
@@ -400,7 +400,6 @@ sub _discover_commands {
         }
 
         $commands{watch}{forcing_slot} = 1;
-
         foreach my $kwd ( qw( exec discard unwatch ) ) {
           $commands{$kwd}{unforcing_slot} = 1;
         }
@@ -517,15 +516,15 @@ sub _prepare {
     }
   }
 
-  my ( $kwd, @kwd_args ) = split( m/_/, lc($method) );
+  my ( $kwd, @sub_kwds ) = split( m/_/, lc($method) );
   if ( $method eq 'eval_cached' ) {
-    undef @kwd_args;
+    undef @sub_kwds;
   }
 
   my $cmd = {
-    kwd      => $kwd,
     method   => $method,
-    kwd_args => \@kwd_args,
+    kwd      => $kwd,
+    sub_kwds => \@sub_kwds,
     args     => $args,
     %{$cbs},
   };
@@ -559,10 +558,10 @@ sub _route {
     return;
   }
 
-  if ( $cmd->{kwd} eq 'multi'
-    && !defined $self->{_forced_slot} )
-  {
-    $self->{_deferred_multi} = $cmd;
+  if ( $cmd->{kwd} eq 'multi' && !defined $self->{_forced_slot} ) {
+    AE::postpone { $cmd->{on_reply}->('OK') };
+    $self->{_need_multi} = 1;
+
     return;
   }
 
@@ -576,11 +575,17 @@ sub _route {
       my @nodes;
 
       if ( defined $slot ) {
-        if ( defined $self->{_deferred_multi} ) {
-          my $multi = $self->{_deferred_multi};
-          undef $self->{_deferred_multi};
+        if ( $self->{_need_multi} ) {
+          $self->{_need_multi} = 0;
 
-          $self->_route($multi);
+          $self->_route(
+            { method   => 'multi',
+              kwd      => 'multi',
+              sub_kwds => [],
+              args     => [],
+            }
+          );
+
           $self->_route($cmd);
 
           return;
@@ -723,9 +728,7 @@ sub _get_route {
 
       my $slot = _get_slot($key);
 
-      if ( $cmd_info->{forcing_slot}
-        || defined $self->{_deferred_multi} )
-      {
+      if ( $cmd_info->{forcing_slot} || $self->{_need_multi} ) {
         $self->{_forced_slot} = $slot;
       }
 
@@ -742,7 +745,7 @@ sub _get_key {
   my $cb   = shift;
 
   my $kwd      = $cmd->{kwd};
-  my @args     = ( @{ $cmd->{kwd_args} }, @{ $cmd->{args} } );
+  my @args     = ( @{ $cmd->{sub_kwds} }, @{ $cmd->{args} } );
   my $cmd_info = $self->{_commands}{$kwd};
 
   my $key;
