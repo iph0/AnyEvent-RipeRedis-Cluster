@@ -92,18 +92,10 @@ sub new {
   $self->{on_node_connect_error} = delete $params{on_node_connect_error};
   $self->{on_node_error}         = delete $params{on_node_error};
 
-  $self->{_node_params}   = \%params;
-  $self->{_nodes_pool}    = {};
-  $self->{_masters}       = undef;
-  $self->{_slots}         = undef;
-  $self->{_commands}      = undef;
-  $self->{_init_state}    = S_NEED_DO;
-  $self->{_refresh_timer} = undef;
-  $self->{_ready}         = 0;
-  $self->{_input_queue}   = [];
-  $self->{_temp_queue}    = [];
-  $self->{_need_multi}    = 0;
-  $self->{_forced_slot}   = undef;
+  $self->{_node_params} = \%params;
+  $self->_reset_internals;
+  $self->{_input_queue} = [];
+  $self->{_temp_queue}  = [];
 
   unless ( $self->{lazy} ) {
     $self->_init;
@@ -115,7 +107,13 @@ sub new {
 sub disconnect {
   my $self = shift;
 
-  # TODO
+  foreach my $node ( values %{ $self->{_nodes_pool} } ) {
+    $node->disconnect;
+  }
+  $self->_reset_internals;
+  $self->_abort;
+
+  return;
 }
 
 sub refresh_interval {
@@ -669,7 +667,10 @@ sub _execute {
         $on_node_error->( $err, $node->host, $node->port );
       }
 
-      if ( !defined $forced_slot && @nodes ) {
+      if ( $err_code != E_CONN_CLOSED_BY_CLIENT
+        && !defined $forced_slot
+        && @nodes )
+      {
         $self->_execute( $cmd, @nodes );
         return;
       }
@@ -804,6 +805,22 @@ sub _process_input_queue {
   return;
 }
 
+sub _reset_internals {
+  my $self = shift;
+
+  $self->{_nodes_pool}    = {};
+  $self->{_masters}       = undef;
+  $self->{_slots}         = undef;
+  $self->{_commands}      = undef;
+  $self->{_init_state}    = S_NEED_DO;
+  $self->{_refresh_timer} = undef;
+  $self->{_ready}         = 0;
+  $self->{_need_multi}    = 0;
+  $self->{_forced_slot}   = undef;
+
+  return;
+}
+
 sub _abort {
   my $self = shift;
   my $err  = shift;
@@ -813,6 +830,11 @@ sub _abort {
   $self->{_input_queue} = [];
   $self->{_temp_queue}  = [];
 
+  if ( !defined $err && @queued_commands ) {
+    $err = _new_error( 'Connection closed by client prematurely.',
+        E_CONN_CLOSED_BY_CLIENT );
+  }
+
   if ( defined $err ) {
     my $err_msg  = $err->message;
     my $err_code = $err->code;
@@ -820,8 +842,8 @@ sub _abort {
     $self->{on_error}->($err);
 
     foreach my $cmd (@queued_commands) {
-      my $err = AnyEvent::RipeRedis::Error->new(
-        qq{Operation "$cmd->{kwd}" aborted: $err_msg}, $err_code );
+      my $err = _new_error( qq{Operation "$cmd->{method}" aborted: $err_msg},
+          $err_code );
 
       $cmd->{on_reply}->( undef, $err );
     }
@@ -851,6 +873,10 @@ sub _get_slot {
   }
 
   return crc16($tag) % MAX_SLOTS;
+}
+
+sub _new_error {
+  return AnyEvent::RipeRedis::Error->new(@_);
 }
 
 sub AUTOLOAD {

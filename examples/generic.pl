@@ -4,7 +4,6 @@ use strict;
 use warnings;
 
 use AnyEvent::RipeRedis::Cluster;
-use Data::Dumper;
 
 my $REDIS = AnyEvent::RipeRedis::Cluster->new(
   startup_nodes => [
@@ -14,22 +13,30 @@ my $REDIS = AnyEvent::RipeRedis::Cluster->new(
   refresh_interval => 5,
 
   on_node_connect => sub {
-    print "Connected\n";
-    print Dumper( \@_ );
+    my $host = shift;
+    my $port = shift;
+
+    print "Connected to $host:$port\n";
   },
 
   on_node_disconnect => sub {
-    print "Disconnected\n";
-    print Dumper( \@_ );
+    my $host = shift;
+    my $port = shift;
+
+    print "Disconnected from $host:$port\n";
   },
 
   on_node_error => sub {
-    print Dumper( \@_ );
+    my $err  = shift;
+    my $host = shift;
+    my $port = shift;
+
+    print "$host:$port: " . $err->message . "\n";
   },
 
   on_error => sub {
     my $err = shift;
-    print Dumper($err);
+    print $err->message . "\n";
   },
 );
 
@@ -42,9 +49,7 @@ $REDIS->get( '__last__',
     my $err = shift;
 
     if ( defined $err ) {
-      print Dumper($err);
-      $cv->send;
-
+      print $err->message . "\n";
       return;
     }
 
@@ -77,7 +82,7 @@ sub set_get {
       my $err = $_[1];
 
       if ( defined $err ) {
-        print Dumper($err);
+        print $err->message . "\n";
         return;
       }
 
@@ -86,7 +91,7 @@ sub set_get {
           my $reply = shift;
 
           if ( defined $err ) {
-            print Dumper($err);
+            print $err->message . "\n";
             return;
           }
 
@@ -102,7 +107,7 @@ sub set_get {
       my $err   = shift;
 
       if ( defined $err ) {
-        print Dumper($err);
+        print $err->message . "\n";
         return;
       }
     }
