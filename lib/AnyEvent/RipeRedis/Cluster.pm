@@ -556,10 +556,10 @@ sub _route {
     return;
   }
 
-  if ( $cmd->{kwd} eq 'multi' && !defined $self->{_forced_slot} ) {
-    AE::postpone { $cmd->{on_reply}->('OK') };
-    $self->{_need_multi} = 1;
-
+  if ( $cmd->{kwd} eq 'multi'
+    && !defined $self->{_forced_slot} )
+  {
+    $self->{_deferred_multi} = $cmd;
     return;
   }
 
@@ -573,10 +573,9 @@ sub _route {
       my @nodes;
 
       if ( defined $slot ) {
-        if ( $self->{_need_multi} ) {
-          $self->{_need_multi} = 0;
-
-          my $multi = $self->_prepare( 'multi', [] );
+        if ( defined $self->{_deferred_multi} ) {
+          my $multi = $self->{_deferred_multi};
+          undef $self->{_deferred_multi};
           $self->_route($multi);
 
           $self->_route($cmd);
@@ -708,7 +707,7 @@ sub _get_route {
       undef $self->{_forced_slot};
     }
 
-    $cb->( $slot, undef );
+    $cb->($slot);
 
     return;
   }
@@ -724,7 +723,9 @@ sub _get_route {
 
       my $slot = _get_slot($key);
 
-      if ( $cmd_info->{forcing_slot} || $self->{_need_multi} ) {
+      if ( $cmd_info->{forcing_slot}
+        || defined $self->{_deferred_multi} )
+      {
         $self->{_forced_slot} = $slot;
       }
 
@@ -803,15 +804,15 @@ sub _process_input_queue {
 sub _reset_internals {
   my $self = shift;
 
-  $self->{_nodes_pool}    = {};
-  $self->{_masters}       = undef;
-  $self->{_slots}         = undef;
-  $self->{_commands}      = undef;
-  $self->{_init_state}    = S_NEED_DO;
-  $self->{_refresh_timer} = undef;
-  $self->{_ready}         = 0;
-  $self->{_need_multi}    = 0;
-  $self->{_forced_slot}   = undef;
+  $self->{_nodes_pool}     = {};
+  $self->{_masters}        = undef;
+  $self->{_slots}          = undef;
+  $self->{_commands}       = undef;
+  $self->{_init_state}     = S_NEED_DO;
+  $self->{_refresh_timer}  = undef;
+  $self->{_ready}          = 0;
+  $self->{_deferred_multi} = undef;
+  $self->{_forced_slot}    = undef;
 
   return;
 }
