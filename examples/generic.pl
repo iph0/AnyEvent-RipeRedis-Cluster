@@ -6,17 +6,12 @@ use warnings;
 use AnyEvent::RipeRedis::Cluster;
 use Data::Dumper;
 
-my $redis = AnyEvent::RipeRedis::Cluster->new(
+my $REDIS = AnyEvent::RipeRedis::Cluster->new(
   startup_nodes => [
     { host => 'localhost', port => 7000 },
     { host => 'localhost', port => 7001 },
   ],
   refresh_interval => 5,
-
-  on_error => sub {
-    my $err = shift;
-    print Dumper($err);
-  },
 
   on_node_connect => sub {
     print "Connected\n";
@@ -31,15 +26,20 @@ my $redis = AnyEvent::RipeRedis::Cluster->new(
   on_node_error => sub {
     print Dumper( \@_ );
   },
+
+  on_error => sub {
+    my $err = shift;
+    print Dumper($err);
+  },
 );
 
 my $cv = AE::cv;
 my $timer;
 
-$redis->get( '__last__',
+$REDIS->get( '__last__',
   sub {
-    my $last = shift || 0;
-    my $err  = shift;
+    my $num = shift || 0;
+    my $err = shift;
 
     if ( defined $err ) {
       print Dumper($err);
@@ -50,44 +50,7 @@ $redis->get( '__last__',
 
     $timer = AE::timer( 0, 0.1,
       sub {
-        $redis->set( "foo$last", $last,
-          sub {
-            my $reply = shift;
-            my $err   = shift;
-
-            if ( defined $err ) {
-              print Dumper($err);
-              return;
-            }
-
-            $redis->get( "foo$last",
-              sub {
-                my $reply = shift;
-
-                if ( defined $err ) {
-                  print Dumper($err);
-                  return;
-                }
-
-                print "$reply\n";
-              }
-            );
-
-            $last++;
-          }
-        );
-
-        $redis->set( '__last__', $last,
-          sub {
-            my $reply = shift;
-            my $err   = shift;
-
-            if ( defined $err ) {
-              print Dumper($err);
-              return;
-            }
-          }
-        );
+        set_get( $num++ );
       }
     );
   }
@@ -103,4 +66,47 @@ my $term_w = AE::signal( TERM => $on_signal );
 
 $cv->recv;
 
-$redis->disconnect;
+$REDIS->disconnect;
+
+
+sub set_get {
+  my $num = shift;
+
+  $REDIS->set( "foo$num", $num,
+    sub {
+      my $err = $_[1];
+
+      if ( defined $err ) {
+        print Dumper($err);
+        return;
+      }
+
+      $REDIS->get( "foo$num",
+        sub {
+          my $reply = shift;
+
+          if ( defined $err ) {
+            print Dumper($err);
+            return;
+          }
+
+          print "$reply\n";
+        }
+      );
+    }
+  );
+
+  $REDIS->set( '__last__', $num,
+    sub {
+      my $reply = shift;
+      my $err   = shift;
+
+      if ( defined $err ) {
+        print Dumper($err);
+        return;
+      }
+    }
+  );
+
+  return;
+}
