@@ -89,6 +89,7 @@ sub set_get {
       $REDIS->get( "foo$num",
         sub {
           my $reply = shift;
+          my $err   = shift;
 
           if ( defined $err ) {
             print $err->message . "\n";
