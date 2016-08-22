@@ -576,13 +576,8 @@ sub _route {
         if ( $self->{_need_multi} ) {
           $self->{_need_multi} = 0;
 
-          $self->_route(
-            { method   => 'multi',
-              kwd      => 'multi',
-              sub_kwds => [],
-              args     => [],
-            }
-          );
+          my $multi = $self->_prepare( 'multi', [] );
+          $self->_route($multi);
 
           $self->_route($cmd);
 
