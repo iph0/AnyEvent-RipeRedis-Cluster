@@ -104,6 +104,16 @@ sub new {
   return $self;
 }
 
+sub execute {
+  my $self   = shift;
+  my $method = shift;
+
+  my $cmd  = $self->_prepare( $method, [@_] );
+  $self->_route($cmd);
+
+  return;
+}
+
 sub disconnect {
   my $self = shift;
 
@@ -882,8 +892,8 @@ sub AUTOLOAD {
 
   my $sub = sub {
     my $self = shift;
-    my $cmd  = $self->_prepare( $method, [@_] );
 
+    my $cmd = $self->_prepare( $method, [@_] );
     $self->_route($cmd);
 
     return;

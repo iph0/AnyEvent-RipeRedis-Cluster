@@ -77,7 +77,7 @@ $REDIS->disconnect;
 sub set_get {
   my $num = shift;
 
-  $REDIS->set( "foo$num", $num,
+  $REDIS->execute( 'set', "foo$num", $num,
     sub {
       my $err = $_[1];
 
@@ -86,7 +86,7 @@ sub set_get {
         return;
       }
 
-      $REDIS->get( "foo$num",
+      $REDIS->execute( 'get', "foo$num",
         sub {
           my $reply = shift;
           my $err   = shift;
