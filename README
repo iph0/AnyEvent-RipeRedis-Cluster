@@ -1,40 +1,37 @@
-AnyEvent-RipeRedis-Cluster version 0.01
-=======================================
-
-The README is used to introduce the module and provide instructions on
-how to install the module, any machine dependencies it may have (for
-example C compilers and installed libraries) and any other information
-that should be provided before the module is installed.
-
-A README file is required for CPAN modules since CPAN extracts the
-README file from a module distribution so that people browsing the
-archive can use it get an idea of the modules uses. It is usually a
-good idea to provide version information here so that people can
-decide whether fixes for the module are worth downloading.
+AnyEvent-RipeRedis-Cluster version 0.01_01
+======================
 
 INSTALLATION
 
 To install this module type the following:
 
-   perl Makefile.PL
-   make
-   make test
-   make install
+  perl Makefile.PL
+  make
+  make test
+  make install
 
-DEPENDENCIES
+DESCRIPTION
 
-This module requires these other modules and libraries:
+AnyEvent::RipeRedis::Cluster is non-blocking Redis Cluster client built on top
+of the L<AnyEvent::RipeRedis>.
 
-  blah blah blah
+Requires Redis 3.0 or higher, and any supported event loop.
 
-COPYRIGHT AND LICENCE
+For more information about Redis Cluster see here:
 
-Put the correct copyright and licence information here.
+  * http://redis.io/topics/cluster-tutorial
+  * http://redis.io/topics/cluster-spec
 
-Copyright (C) 2016 by Eugene Ponizovsky
+AUTHOR
 
-This library is free software; you can redistribute it and/or modify
-it under the same terms as Perl itself, either Perl version 5.20.2 or,
-at your option, any later version of Perl 5 you may have available.
+Eugene Ponizovsky, <ponizovsky@gmail.com>
 
+Sponsored by SMS Online, <dev.opensource@sms-online.com>
 
+COPYRIGHT AND LICENSE
+
+Copyright (c) 2016, Eugene Ponizovsky, <ponizovsky@gmail.com>,
+SMS Online, <dev.opensource@sms-online.com>. All rights reserved.
+
+This module is free software; you can redistribute it and/or modify it under
+the same terms as Perl itself.

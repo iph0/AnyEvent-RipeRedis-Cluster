@@ -5,7 +5,7 @@ use warnings;
 
 use AnyEvent::RipeRedis::Cluster;
 
-my $REDIS = AnyEvent::RipeRedis::Cluster->new(
+my $CLUSTER = AnyEvent::RipeRedis::Cluster->new(
   startup_nodes => [
     { host => 'localhost', port => 7000 },
     { host => 'localhost', port => 7001 },
@@ -43,7 +43,7 @@ my $REDIS = AnyEvent::RipeRedis::Cluster->new(
 my $cv = AE::cv;
 my $timer;
 
-$REDIS->get( '__last__',
+$CLUSTER->get( '__last__',
   sub {
     my $num = shift || 0;
     my $err = shift;
@@ -71,13 +71,13 @@ my $term_w = AE::signal( TERM => $on_signal );
 
 $cv->recv;
 
-$REDIS->disconnect;
+$CLUSTER->disconnect;
 
 
 sub set_get {
   my $num = shift;
 
-  $REDIS->set( "foo$num", $num,
+  $CLUSTER->set( "foo$num", $num,
     sub {
       my $err = $_[1];
 
@@ -86,7 +86,7 @@ sub set_get {
         return;
       }
 
-      $REDIS->get( "foo$num",
+      $CLUSTER->get( "foo$num",
         sub {
           my $reply = shift;
           my $err   = shift;
@@ -102,7 +102,7 @@ sub set_get {
     }
   );
 
-  $REDIS->set( '__last__', $num,
+  $CLUSTER->set( '__last__', $num,
     sub {
       my $reply = shift;
       my $err   = shift;

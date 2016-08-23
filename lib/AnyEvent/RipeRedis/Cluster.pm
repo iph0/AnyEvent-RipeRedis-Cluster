@@ -919,48 +919,221 @@ sub DESTROY {
 
 1;
 __END__
-# Below is stub documentation for your module. You'd better edit it!
 
 =head1 NAME
 
-AnyEvent::RipeRedis::Cluster - Perl extension for blah blah blah
+AnyEvent::RipeRedis::Cluster - Non-blocking Redis Cluster client
 
 =head1 SYNOPSIS
 
+  use AnyEvent;
   use AnyEvent::RipeRedis::Cluster;
-  blah blah blah
+
+  my $cluster = AnyEvent::RipeRedis::Cluster->new(
+    startup_nodes => [
+      { host => 'localhost', port => 7000 },
+      { host => 'localhost', port => 7001 },
+    ],
+  );
+
+  my $cv = AE::cv;
+
+  $cluster->set( 'foo', 'bar',
+    sub {
+      my $err = $_[1];
+
+      if ( defined $err ) {
+        my $err_msg  = $err->message;
+        my $err_code = $err->code;
+
+        warn "[$err_code] $err_msg\n";
+        $cv->send;
+
+        return;
+      }
+
+      $cluster->get( 'foo',
+        sub {
+          my $reply = shift;
+          my $err   = shift;
+
+          if ( defined $err ) {
+            my $err_msg  = $err->message;
+            my $err_code = $err->code;
+
+            warn "[$err_code] $err_msg\n";
+            $cv->send;
+
+            return;
+          }
+
+          print "$reply\n";
+          $cv->send;
+        }
+      );
+    }
+  );
+
+  $cv->recv;
 
 =head1 DESCRIPTION
 
-Stub documentation for AnyEvent::RipeRedis::Cluster, created by h2xs. It looks like the
-author of the extension was negligent enough to leave the stub
-unedited.
+AnyEvent::RipeRedis::Cluster is non-blocking Redis Cluster client built on top
+of the L<AnyEvent::RipeRedis>.
 
-Blah blah blah.
+Requires Redis 3.0 or higher, and any supported event loop.
 
+For more information about Redis Cluster see here:
+
+=over
+
+=item *
+
+L<http://redis.io/topics/cluster-tutorial>
+
+=item *
+
+L<http://redis.io/topics/cluster-spec>
+
+=back
+
+=head1 CONSTRUCTOR
+
+=head2 new( %params )
+
+  my $cluster = AnyEvent::RipeRedis::Cluster->new(
+    startup_nodes => [
+      { host => 'localhost', port => 7000 },
+      { host => 'localhost', port => 7001 },
+    ],
+    refresh_interval => 5,
+    lazy             => 1,
+
+    on_node_connect => sub {
+      # handling...
+    },
+
+    on_node_disconnect => sub {
+      # handling...
+    },
+
+    on_node_connect_error => sub {
+      # error handling...
+    },
+
+    on_node_error => sub {
+      # error handling...
+    },
+
+    on_error => sub {
+      # error handling...
+    },
+  );
+
+=over
+
+=item startup_nodes => \@nodes
+
+=item allow_slaves => $boolean
+
+=item lazy => $boolean
+
+=item refresh_interval => $fractional_seconds
+
+=item on_node_connect => $cb->( $host, $port )
+
+=item on_node_disconnect => $cb->( $host, $port )
+
+=item on_node_connect_error => $cb->( $err, $host, $port )
+
+=item on_node_error => $cb->( $err, $host, $port )
+
+=item on_error => $cb->( $err )
+
+=back
+
+=head1 COMMAND EXECUTION
+
+=head2 <command>( [ @args ] [, $cb->( $reply, $err ) ] )
+
+The full list of the Redis commands can be found here: L<http://redis.io/commands>.
+
+  $cluster->get( 'foo',
+    sub {
+      my $reply = shift;
+      my $err   = shift;
+
+      if ( defined $err ) {
+        # error handling...
+
+        return;
+      }
+
+      print "$reply\n";
+    }
+  );
+
+  $cluster->lrange( 'list', 0, -1,
+    sub {
+      my $reply = shift;
+      my $err   = shift;
+
+      if ( defined $err ) {
+        # error handling...
+
+        return;
+      }
+
+      foreach my $value ( @{$reply}  ) {
+        print "$value\n";
+      }
+    }
+  );
+
+  $cluster->incr( 'counter' );
+
+=head2 execute( $command, [ @args ] [, $cb->( $reply, $err ) ] )
+
+An alternative method to execute commands. In some cases it can be more
+convenient.
+
+  $cluster->execute( 'get', 'foo',
+    sub {
+      my $reply = shift;
+      my $err   = shift;
+
+      if ( defined $err ) {
+        # error handling...
+
+        return;
+      }
+
+      print "$reply\n";
+    }
+  );
+
+=head1 SERVICE FUNCTIONS
+
+=head2 crc16( $data )
+
+Compute CRC16 for the specified data as defined in Redis Cluster specification.
 
 =head1 SEE ALSO
 
-Mention other useful documentation such as the documentation of
-related modules or operating system documentation (such as man pages
-in UNIX), or any relevant external documentation such as RFCs or
-standards.
-
-If you have a mailing list set up for your module, mention it here.
-
-If you have a web site set up for your module, mention it here.
+L<AnyEvent::RipeRedis>
 
 =head1 AUTHOR
 
-Eugene Ponizovsky, E<lt>iph@E<gt>
+Eugene Ponizovsky, E<lt>ponizovsky@gmail.comE<gt>
+
+Sponsored by SMS Online, E<lt>dev.opensource@sms-online.comE<gt>
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (C) 2016 by Eugene Ponizovsky
+Copyright (c) 2016, Eugene Ponizovsky, E<lt>ponizovsky@gmail.comE<gt>,
+SMS Online, E<lt>dev.opensource@sms-online.comE<gt>. All rights reserved.
 
-This library is free software; you can redistribute it and/or modify
-it under the same terms as Perl itself, either Perl version 5.20.2 or,
-at your option, any later version of Perl 5 you may have available.
-
+This module is free software; you can redistribute it and/or modify it under
+the same terms as Perl itself.
 
 =cut
