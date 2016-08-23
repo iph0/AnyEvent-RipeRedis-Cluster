@@ -406,7 +406,6 @@ sub _discover_commands {
 
           $commands{$kwd} = $cmd_info;
         }
-
         $commands{watch}{forcing_slot} = 1;
         foreach my $kwd ( qw( exec discard unwatch ) ) {
           $commands{$kwd}{unforcing_slot} = 1;
