@@ -105,10 +105,10 @@ sub new {
 }
 
 sub execute {
-  my $self   = shift;
-  my $method = shift;
+  my $self     = shift;
+  my $cmd_name = shift;
 
-  my $cmd  = $self->_prepare( $method, [@_] );
+  my $cmd = $self->_prepare( $cmd_name, [@_] );
   $self->_route($cmd);
 
   return;
@@ -246,8 +246,8 @@ sub _discover_slots {
   weaken($self);
 
   $self->_execute(
-    { method => 'cluster_slots',
-      args   => [],
+    { name => 'cluster_slots',
+      args => [],
 
       on_reply => sub {
         my $slots = shift;
@@ -346,7 +346,7 @@ sub _prepare_slaves {
   my $reply_cnt = scalar @{$slaves};
 
   my $cmd = {
-    method => 'readonly',
+    name => 'readonly',
     args   => [],
 
     on_reply => sub {
@@ -370,8 +370,8 @@ sub _discover_commands {
   my @nodes = keys %{ $self->{_nodes_pool} };
 
   $self->_execute(
-    { method => 'command',
-      args   => [],
+    { name => 'command',
+      args => [],
 
       on_reply => sub {
         my $commands_raw = shift;
@@ -502,9 +502,9 @@ sub _create_on_node_error {
 }
 
 sub _prepare {
-  my $self   = shift;
-  my $method = shift;
-  my $args   = shift;
+  my $self     = shift;
+  my $cmd_name = shift;
+  my $args     = shift;
 
   weaken($self);
 
@@ -515,7 +515,7 @@ sub _prepare {
   else {
     $cbs = {};
     if ( ref( $args->[-1] ) eq 'CODE' ) {
-      if ( exists $SUB_COMMANDS{$method} ) {
+      if ( exists $SUB_COMMANDS{$cmd_name} ) {
         $cbs->{on_message} = pop @{$args};
       }
       else {
@@ -524,16 +524,15 @@ sub _prepare {
     }
   }
 
-  my ( $kwd, @sub_kwds ) = split( m/_/, lc($method) );
-  if ( $method eq 'eval_cached' ) {
-    undef @sub_kwds;
-  }
+  my @kwds
+      = $cmd_name eq 'eval_cached'
+      ? ('eval')
+      : split( m/_/, lc($cmd_name) );
 
   my $cmd = {
-    method   => $method,
-    kwd      => $kwd,
-    sub_kwds => \@sub_kwds,
-    args     => $args,
+    name => $cmd_name,
+    kwds => \@kwds,
+    args => $args,
     %{$cbs},
   };
 
@@ -566,7 +565,7 @@ sub _route {
     return;
   }
 
-  if ( $cmd->{kwd} eq 'multi'
+  if ( $cmd->{name} eq 'multi'
     && !defined $self->{_forced_slot} )
   {
     $self->{_deferred_multi} = $cmd;
@@ -601,7 +600,7 @@ sub _route {
         @nodes
             = $allow_slaves
             ? @{ $range->[2] }
-            : $range->[2][0];
+            : ( $range->[2][0] );
       }
       else {
         @nodes
@@ -689,9 +688,7 @@ sub _execute {
     return;
   };
 
-  my $method = $cmd->{method};
-
-  $node->$method( @{ $cmd->{args} },
+  $node->execute( $cmd->{name}, @{ $cmd->{args} },
     { on_reply => $on_reply,
 
       defined $cmd->{on_message}
@@ -708,7 +705,7 @@ sub _get_route {
   my $cmd  = shift;
   my $cb   = shift;
 
-  my $cmd_info = $self->{_commands}{ $cmd->{kwd} };
+  my $cmd_info = $self->{_commands}{ $cmd->{kwds}[0] };
 
   if ( defined $self->{_forced_slot} ) {
     my $slot = $self->{_forced_slot};
@@ -751,9 +748,8 @@ sub _get_key {
   my $cmd  = shift;
   my $cb   = shift;
 
-  my $kwd      = $cmd->{kwd};
-  my @args     = ( @{ $cmd->{sub_kwds} }, @{ $cmd->{args} } );
-  my $cmd_info = $self->{_commands}{$kwd};
+  my $cmd_info = $self->{_commands}{ $cmd->{kwds}[0] };
+  my @args     = ( @{ $cmd->{kwds} }, @{ $cmd->{args} } );
 
   my $key;
 
@@ -764,8 +760,8 @@ sub _get_key {
         : @{ $self->{_masters} };
 
     $self->_execute(
-      { method        => 'command_getkeys',
-        args          => [ $kwd, @args ],
+      { name          => 'command_getkeys',
+        args          => [@args],
         on_node_error => $cmd->{on_node_error},
 
         on_reply => sub {
@@ -790,7 +786,7 @@ sub _get_key {
     return;
   }
   elsif ( $cmd_info->{key} > 0 ) {
-    $key = $args[ $cmd_info->{key} - 1 ];
+    $key = $args[ $cmd_info->{key} ];
   }
 
   $cb->($key);
@@ -848,7 +844,7 @@ sub _abort {
     $self->{on_error}->($err);
 
     foreach my $cmd (@queued_commands) {
-      my $err = _new_error( qq{Operation "$cmd->{method}" aborted: $err_msg},
+      my $err = _new_error( qq{Operation "$cmd->{name}" aborted: $err_msg},
           $err_code );
 
       $cmd->{on_reply}->( undef, $err );
@@ -887,13 +883,13 @@ sub _new_error {
 
 sub AUTOLOAD {
   our $AUTOLOAD;
-  my $method = $AUTOLOAD;
-  $method =~ s/^.+:://;
+  my $cmd_name = $AUTOLOAD;
+  $cmd_name =~ s/^.+:://;
 
   my $sub = sub {
     my $self = shift;
 
-    my $cmd = $self->_prepare( $method, [@_] );
+    my $cmd = $self->_prepare( $cmd_name, [@_] );
     $self->_route($cmd);
 
     return;
@@ -901,7 +897,7 @@ sub AUTOLOAD {
 
   do {
     no strict 'refs';
-    *{$method} = $sub;
+    *{$cmd_name} = $sub;
   };
 
   goto &{$sub};
@@ -914,7 +910,7 @@ sub DESTROY {
     my @queued_commands = $self->_queued_commands;
 
     foreach my $cmd (@queued_commands) {
-      warn "Operation \"$cmd->{kwd}\" aborted:"
+      warn "Operation \"$cmd->{name}\" aborted:"
           . " Client object destroyed prematurely.\n";
     }
   }
