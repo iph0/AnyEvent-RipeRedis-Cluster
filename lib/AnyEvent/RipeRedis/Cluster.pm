@@ -525,7 +525,7 @@ sub _prepare {
 
   my @kwds
       = $cmd_name eq 'eval_cached'
-      ? ('eval')
+      ? ('evalsha')
       : split( m/_/, lc($cmd_name) );
 
   my $cmd = {
