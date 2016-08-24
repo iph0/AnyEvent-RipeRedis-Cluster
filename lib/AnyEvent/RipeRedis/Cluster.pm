@@ -650,8 +650,7 @@ sub _execute {
           $self->{_ready}      = 0;
         }
 
-        my ( $slot, $fwd_hostport )
-            = ( split( m/\s+/, $err->message ) )[ 1, 2 ];
+        my ($fwd_hostport) = ( split( m/\s+/, $err->message ) )[2];
 
         unless ( defined $nodes_pool->{$fwd_hostport} ) {
           my ( $host, $port ) = parse_hostport($fwd_hostport);
