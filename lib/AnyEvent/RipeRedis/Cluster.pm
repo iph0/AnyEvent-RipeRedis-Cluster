@@ -629,8 +629,7 @@ sub _execute {
   else {
     $hostport = shift @nodes;
   }
-  my $node        = $self->{_nodes_pool}{$hostport};
-  my $forced_slot = $self->{_forced_slot};
+  my $node = $self->{_nodes_pool}{$hostport};
 
   weaken($self);
 
@@ -642,9 +641,7 @@ sub _execute {
       my $err_code   = $err->code;
       my $nodes_pool = $self->{_nodes_pool};
 
-      if ( ( $err_code == E_MOVED || $err_code == E_ASK )
-        && !defined $forced_slot )
-      {
+      if ( $err_code == E_MOVED || $err_code == E_ASK ) {
         if ( $err_code == E_MOVED ) {
           $self->{_init_state} = S_NEED_DO;
           $self->{_ready}      = 0;
@@ -669,10 +666,7 @@ sub _execute {
         $on_node_error->( $err, $node->host, $node->port );
       }
 
-      if ( $err_code != E_CONN_CLOSED_BY_CLIENT
-        && !defined $forced_slot
-        && @nodes )
-      {
+      if ( $err_code != E_CONN_CLOSED_BY_CLIENT && @nodes ) {
         $self->_execute( $cmd, @nodes );
         return;
       }
