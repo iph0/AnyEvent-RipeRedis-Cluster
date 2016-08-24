@@ -13,7 +13,7 @@ To install this module type the following:
 DESCRIPTION
 
 AnyEvent::RipeRedis::Cluster is non-blocking Redis Cluster client built on top
-of the L<AnyEvent::RipeRedis>.
+of the AnyEvent::RipeRedis.
 
 Requires Redis 3.0 or higher, and any supported event loop.
 

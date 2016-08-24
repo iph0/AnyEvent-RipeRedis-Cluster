@@ -7,6 +7,7 @@ use warnings;
 our $VERSION = '0.01_01';
 
 use AnyEvent::RipeRedis;
+use AnyEvent::RipeRedis::Error;
 
 use AnyEvent::Socket;
 use Scalar::Util qw( looks_like_number weaken );
