@@ -23,14 +23,16 @@ BEGIN {
 }
 
 use constant {
-  MAX_SLOTS => 16384,
+  D_REFRESH_INTERVAL => 15,
 
   %ERROR_CODES,
 
   # Operation status
-  S_NEED_DO      => 1,
-  S_IN_PROGRESS  => 2,
-  S_DONE         => 3,
+  S_NEED_DO     => 1,
+  S_IN_PROGRESS => 2,
+  S_DONE        => 3,
+
+  MAX_SLOTS => 16384,
 };
 
 my @CRC16_TAB = (
@@ -79,6 +81,13 @@ sub new {
   my %params = @_;
 
   my $self = bless {}, $class;
+
+  unless ( defined $params{startup_nodes} ) {
+    croak 'Startup nodes not specified';
+  }
+  unless ( ref( $params{startup_nodes} ) eq 'ARRAY' ) {
+    croak 'Startup nodes must be specified as array reference';
+  }
 
   $self->{startup_nodes} = $params{startup_nodes};
   $self->{allow_slaves}
@@ -139,12 +148,15 @@ sub refresh_interval {
   if (@_) {
     my $seconds = shift;
 
-    if ( defined $seconds
-      && ( !looks_like_number($seconds) || $seconds < 0 ) )
-    {
-      croak qq{"refresh_interval" must be a positive number};
+    if ( defined $seconds ) {
+      if ( !looks_like_number($seconds) || $seconds < 0 ) {
+        croak qq{"refresh_interval" must be a positive number};
+      }
+      $self->{refresh_interval} = $seconds;
     }
-    $self->{refresh_interval} = $seconds;
+    else {
+      $self->{refresh_interval} = D_REFRESH_INTERVAL;
+    }
   }
 
   return $self->{refresh_interval};
@@ -210,9 +222,7 @@ sub _init {
       $self->{_ready} = 1;
       $self->_process_input_queue;
 
-      if ( defined $self->{refresh_interval}
-        && $self->{refresh_interval} > 0 )
-      {
+      if ( $self->{refresh_interval} > 0 ) {
         $self->{_refresh_timer} = AE::timer(
           $self->{refresh_interval}, 0,
           sub {
@@ -1006,8 +1016,11 @@ L<http://redis.io/topics/cluster-spec>
       { host => 'localhost', port => 7000 },
       { host => 'localhost', port => 7001 },
     ],
-    refresh_interval => 5,
-    lazy             => 1,
+    connection_timeout     => 5,
+    read_timeout           => 5,
+    refresh_interval       => 5,
+    lazy                   => 1,
+    min_reconnect_interval => 5,
 
     on_node_connect => sub {
       # handling...
@@ -1034,29 +1047,112 @@ L<http://redis.io/topics/cluster-spec>
 
 =item startup_nodes => \@nodes
 
+Specifies the list of startup nodes. Parameter should contain array of hashes
+that contains addresses of some nodes in the cluster. Each hash should contain
+C<host> and C<port> elements. The client will try to connect to random node
+from the list to retrieve information about all cluster nodes and slots
+mappings. If the client could not connect to first selected node, it will try
+to connect to another random node from the list.
+
 =item password => $password
+
+If the password is specified, the C<AUTH> command is sent to all nodes
+of the cluster after connection.
 
 =item allow_slaves => $boolean
 
+If enabled, the client will randomly try to send read-only commands to slave
+nodes.
+
 =item utf8 => $boolean
+
+If enabled, all strings will be converted to UTF-8 before sending to nodes,
+and all results will be decoded from UTF-8.
 
 =item connection_timeout => $fractional_seconds
 
+Specifies connection timeout. If the client could not connect to the node
+after specified timeout, the C<on_node_connect_error> callback is called with the
+C<E_CANT_CONN> error, or if it not specified, the C<on_error> callback is
+called. The timeout specifies in seconds and can contain a fractional part.
+
+  connection_timeout => 10.5,
+
+By default the client use kernel's connection timeout.
+
 =item read_timeout => $fractional_seconds
+
+Specifies read timeout. If the client could not receive a reply from the node
+after specified timeout, the client close connection and call the C<on_error>
+callback with the C<E_READ_TIMEDOUT> error. The timeout is specifies in seconds
+and can contain a fractional part.
+
+  read_timeout => 3.5,
+
+Not set by default.
 
 =item lazy => $boolean
 
+If enabled, the connection to nodes establishes at time when you will send the
+first command to the cluster. By default the connection establishes after
+calling of the C<new> method.
+
+Disabled by default.
+
 =item reconnect => $boolean
+
+If the connection to the node was lost and the parameter C<reconnect> is
+TRUE (default), the client try to restore the connection when you execute next
+command. The client try to reconnect only once and, if attempt fails, the error
+object is passed to command callback. If you need several attempts of the
+reconnection, you must retry a command from the callback as many times, as you
+need. Such behavior allows to control reconnection procedure.
+
+Enabled by default.
 
 =item min_reconnect_interval => $fractional_seconds
 
+If the parameter is specified, the client will try to reconnect not often, than
+after this interval. Commands executed between reconnections will be queued.
+
+  min_reconnect_interval => 5,
+
+Not set by default.
+
 =item refresh_interval => $fractional_seconds
+
+Cluster state refresh interval. If set to zero, cluster state will be updated
+only on MOVED redirect.
+
+By default is 15 seconds.
 
 =item handle_params => \%params
 
+Specifies L<AnyEvent::Handle> parameters.
+
+  handle_params => {
+    autocork => 1,
+    linger   => 60,
+  }
+
+Enabling of the C<autocork> parameter can improve perfomance. See
+documentation on L<AnyEvent::Handle> for more information.
+
 =item on_node_connect => $cb->( $host, $port )
 
+The C<on_node_connect> callback is called when the connection to specific node
+is successfully established. To callback are passed two arguments, host and
+port of the node.
+
+Not set by default.
+
 =item on_node_disconnect => $cb->( $host, $port )
+
+The C<on_node_disconnect> callback is called when the connection to specific
+node is closed by any reason. To callback are passed two arguments, host and
+port of the node.
+
+Not set by default.
 
 =item on_node_connect_error => $cb->( $err, $host, $port )
 
@@ -1064,11 +1160,17 @@ L<http://redis.io/topics/cluster-spec>
 
 =item on_error => $cb->( $err )
 
+The C<on_error> callback is called when occurred an error, which was affected
+on whole client (e. g. nodes discovery error). Also the C<on_error> callback is
+called on command errors if the command callback is not specified. If the
+C<on_error> callback is not specified, the client just print an error messages
+to C<STDERR>.
+
 =back
 
 =head1 COMMAND EXECUTION
 
-=head2 <command>( [ @args ] [, $cb->( $reply, $err ) ] )
+=head2 <command>( [ @args ] [, ( $cb->( $reply, $err ) | \%cbs ) ] )
 
 The full list of the Redis commands can be found here: L<http://redis.io/commands>.
 
@@ -1125,6 +1227,32 @@ convenient.
       print "$reply\n";
     }
   );
+
+=head1 ERROR CODES
+
+=head1 DISCONNECTION
+
+When the connection to the server is no longer needed you can close it in two
+ways: call the method C<disconnect()> or just "forget" any references to an
+AnyEvent::RipeRedis::Cluster object, but in this case the client object is
+destroyed without calling any callbacks, including the C<on_disconnect>
+callback, to avoid an unexpected behavior.
+
+=head2 disconnect()
+
+The method for synchronous disconnection. All uncompleted operations will be
+aborted.
+
+=head1 OTHER METHODS
+
+=head2 refresh_interval( [ $fractional_seconds ] )
+
+Get or set the C<refresh_interval> of the client. The C<undef> value resets
+the C<refresh_interval> to default value.
+
+=head2 on_error( [ $callback ] )
+
+Get or set the C<on_error> callback.
 
 =head1 SERVICE FUNCTIONS
 
