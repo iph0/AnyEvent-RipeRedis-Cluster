@@ -10,8 +10,8 @@ use AnyEvent::RipeRedis;
 use AnyEvent::RipeRedis::Error;
 
 use AnyEvent::Socket;
-use Scalar::Util qw( looks_like_number weaken );
 use List::MoreUtils qw( bsearch );
+use Scalar::Util qw( looks_like_number weaken );
 use Carp qw( croak );
 
 our %ERROR_CODES;
@@ -80,20 +80,26 @@ sub new {
 
   my $self = bless {}, $class;
 
-  $self->{startup_nodes} = delete $params{startup_nodes};
+  $self->{startup_nodes} = $params{startup_nodes};
   $self->{allow_slaves}
-      = exists $params{allow_slaves} ? delete $params{allow_slaves} : 1;
-  $self->{lazy} = delete $params{lazy};
+      = exists $params{allow_slaves} ? $params{allow_slaves} : 1;
+  $self->{lazy} = $params{lazy};
+  $self->refresh_interval( $params{refresh_interval} );
 
-  $self->refresh_interval( delete $params{refresh_interval} );
-  $self->on_error( delete $params{on_error} );
+  $self->{on_node_connect}       = $params{on_node_connect};
+  $self->{on_node_disconnect}    = $params{on_node_disconnect};
+  $self->{on_node_connect_error} = $params{on_node_connect_error};
+  $self->{on_node_error}         = $params{on_node_error};
+  $self->on_error( $params{on_error} );
 
-  $self->{on_node_connect}       = delete $params{on_node_connect};
-  $self->{on_node_disconnect}    = delete $params{on_node_disconnect};
-  $self->{on_node_connect_error} = delete $params{on_node_connect_error};
-  $self->{on_node_error}         = delete $params{on_node_error};
+  my %node_params;
+  foreach my $name ( qw( password utf8 connection_timeout read_timeout
+      reconnect min_reconnect_interval handle_params ) )
+  {
+    $node_params{$name} = $params{$name};
+  }
+  $self->{_node_params} = \%node_params;
 
-  $self->{_node_params} = \%params;
   $self->_reset_internals;
   $self->{_input_queue} = [];
   $self->{_temp_queue}  = [];
@@ -188,7 +194,7 @@ sub _init {
 
   weaken($self);
 
-  $self->_discover_slots(
+  $self->_discover_nodes(
     sub {
       my $err = $_[1];
 
@@ -221,7 +227,7 @@ sub _init {
   return;
 }
 
-sub _discover_slots {
+sub _discover_nodes {
   my $self = shift;
   my $cb   = shift;
 
@@ -259,7 +265,7 @@ sub _discover_slots {
           return;
         }
 
-        $self->_process_slots( $slots,
+        $self->_prepare_nodes_pool( $slots,
           sub {
             unless ( defined $self->{_commands} ) {
               $self->_discover_commands($cb);
@@ -277,7 +283,7 @@ sub _discover_slots {
   return;
 }
 
-sub _process_slots {
+sub _prepare_nodes_pool {
   my $self      = shift;
   my $slots_raw = shift;
   my $cb        = shift;
@@ -348,7 +354,7 @@ sub _prepare_slaves {
 
   my $cmd = {
     name => 'readonly',
-    args   => [],
+    args => [],
 
     on_reply => sub {
       return unless --$reply_cnt == 0;
@@ -1028,11 +1034,25 @@ L<http://redis.io/topics/cluster-spec>
 
 =item startup_nodes => \@nodes
 
+=item password => $password
+
 =item allow_slaves => $boolean
+
+=item utf8 => $boolean
+
+=item connection_timeout => $fractional_seconds
+
+=item read_timeout => $fractional_seconds
 
 =item lazy => $boolean
 
+=item reconnect => $boolean
+
+=item min_reconnect_interval => $fractional_seconds
+
 =item refresh_interval => $fractional_seconds
+
+=item handle_params => \%params
 
 =item on_node_connect => $cb->( $host, $port )
 

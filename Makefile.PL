@@ -1,14 +1,33 @@
 use 5.008000;
+
 use ExtUtils::MakeMaker;
-# See lib/ExtUtils/MakeMaker.pm for details of how to influence
-# the contents of the Makefile that is written.
+
 WriteMakefile(
-    NAME              => 'AnyEvent::RipeRedis::Cluster',
-    VERSION_FROM      => 'lib/AnyEvent/RipeRedis/Cluster.pm', # finds $VERSION, requires EU::MM from perl >= 5.5
-    PREREQ_PM         => {}, # e.g., Module::Name => 1.1
-    ABSTRACT_FROM     => 'lib/AnyEvent/RipeRedis/Cluster.pm', # retrieve abstract from module
-    AUTHOR            => 'Eugene Ponizovsky <iph@>',
-    #LICENSE           => 'perl',
-    #Value must be from legacy list of licenses here
-    #http://search.cpan.org/perldoc?Module%3A%3ABuild%3A%3AAPI
+  NAME             => 'AnyEvent::RipeRedis::Cluster',
+  VERSION_FROM     => 'lib/AnyEvent/RipeRedis/Cluster.pm',
+  MIN_PERL_VERSION => '5.008000',
+  PREREQ_PM        => {
+    'AnyEvent::RipeRedis' => '0.08',
+    'AnyEvent'            => '6.01',
+    'List::MoreUtils'     => '0.416',
+    'Scalar::Util'        => '0',
+    'Carp'                => '0',
+  },
+  CONFIGURE_REQUIRES => {
+    'ExtUtils::MakeMaker' => '6.64',
+  },
+  BUILD_REQUIRES => {
+    'Test::More'  => '0.98',
+  },
+  META_MERGE => {
+    resources => {
+      homepage   => 'https://github.com/iph0/AnyEvent-RipeRedis-Cluster',
+      bugtracker => 'https://github.com/iph0/AnyEvent-RipeRedis-Cluster/issues',
+      repository => 'https://github.com/iph0/AnyEvent-RipeRedis-Cluster',
+      license    => 'http://dev.perl.org/licenses/',
+    },
+  },
+  ABSTRACT_FROM => 'lib/AnyEvent/RipeRedis/Cluster.pm',
+  AUTHOR        => 'Eugene Ponizovsky <ponizovsky@gmail.com>',
+  LICENSE       => 'perl',
 );

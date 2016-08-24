@@ -1,6 +1,1 @@
-Revision history for Perl extension AnyEvent::RipeRedis::Cluster.
-
-0.01  Fri Jun 10 15:16:31 2016
-	- original version; created by h2xs 1.23 with options
-		-AXO --skip-exporter -b 5.8.0 -n AnyEvent::RipeRedis::Cluster
-
+Revision history for AnyEvent::RipeRedis::Cluster.
