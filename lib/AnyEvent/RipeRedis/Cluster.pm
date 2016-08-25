@@ -3,6 +3,7 @@ package AnyEvent::RipeRedis::Cluster;
 use 5.008000;
 use strict;
 use warnings;
+use base qw( Exporter );
 
 our $VERSION = '0.01_01';
 
@@ -95,10 +96,9 @@ sub new {
   $self->{lazy} = $params{lazy};
   $self->refresh_interval( $params{refresh_interval} );
 
-  $self->{on_node_connect}       = $params{on_node_connect};
-  $self->{on_node_disconnect}    = $params{on_node_disconnect};
-  $self->{on_node_connect_error} = $params{on_node_connect_error};
-  $self->{on_node_error}         = $params{on_node_error};
+  $self->{on_node_connect}    = $params{on_node_connect};
+  $self->{on_node_disconnect} = $params{on_node_disconnect};
+  $self->{on_node_error}      = $params{on_node_error};
   $self->on_error( $params{on_error} );
 
   my %node_params;
@@ -447,13 +447,12 @@ sub _new_node {
 
   return AnyEvent::RipeRedis->new(
     %{ $self->{_node_params} },
-    host             => $host,
-    port             => $port,
-    lazy             => $lazy,
-    on_connect       => $self->_create_on_node_connect( $host, $port ),
-    on_disconnect    => $self->_create_on_node_disconnect( $host, $port ),
-    on_connect_error => $self->_create_on_node_connect_error( $host, $port ),
-    on_error         => $self->_create_on_node_error( $host, $port ),
+    host          => $host,
+    port          => $port,
+    lazy          => $lazy,
+    on_connect    => $self->_create_on_node_connect( $host, $port ),
+    on_disconnect => $self->_create_on_node_disconnect( $host, $port ),
+    on_error      => $self->_create_on_node_error( $host, $port ),
   );
 }
 
@@ -481,22 +480,6 @@ sub _create_on_node_disconnect {
   return sub {
     if ( defined $self->{on_node_disconnect} ) {
       $self->{on_node_disconnect}->( $host, $port );
-    }
-  };
-}
-
-sub _create_on_node_connect_error {
-  my $self = shift;
-  my $host = shift;
-  my $port = shift;
-
-  weaken($self);
-
-  return sub {
-    my $err = shift;
-
-    if ( defined $self->{on_node_connect_error} ) {
-      $self->{on_node_connect_error}->( $err, $host, $port );
     }
   };
 }
@@ -953,10 +936,7 @@ AnyEvent::RipeRedis::Cluster - Non-blocking Redis Cluster client
       my $err = $_[1];
 
       if ( defined $err ) {
-        my $err_msg  = $err->message;
-        my $err_code = $err->code;
-
-        warn "[$err_code] $err_msg\n";
+        warn $err->message . "\n";
         $cv->send;
 
         return;
@@ -968,10 +948,7 @@ AnyEvent::RipeRedis::Cluster - Non-blocking Redis Cluster client
           my $err   = shift;
 
           if ( defined $err ) {
-            my $err_msg  = $err->message;
-            my $err_code = $err->code;
-
-            warn "[$err_code] $err_msg\n";
+            warn $err->message . "\n";
             $cv->send;
 
             return;
@@ -1030,10 +1007,6 @@ L<http://redis.io/topics/cluster-spec>
       # handling...
     },
 
-    on_node_connect_error => sub {
-      # error handling...
-    },
-
     on_node_error => sub {
       # error handling...
     },
@@ -1072,9 +1045,9 @@ and all results will be decoded from UTF-8.
 =item connection_timeout => $fractional_seconds
 
 Specifies connection timeout. If the client could not connect to the node
-after specified timeout, the C<on_node_connect_error> callback is called with the
-C<E_CANT_CONN> error, or if it not specified, the C<on_error> callback is
-called. The timeout specifies in seconds and can contain a fractional part.
+after specified timeout, the C<on_node_error> callback is called with the
+C<E_CANT_CONN> error. The timeout specifies in seconds and can contain a
+fractional part.
 
   connection_timeout => 10.5,
 
@@ -1141,27 +1114,33 @@ documentation on L<AnyEvent::Handle> for more information.
 =item on_node_connect => $cb->( $host, $port )
 
 The C<on_node_connect> callback is called when the connection to specific node
-is successfully established. To callback are passed two arguments, host and
-port of the node.
+is successfully established. To callback are passed two arguments: host and
+port of the node to which client was connected.
 
 Not set by default.
 
 =item on_node_disconnect => $cb->( $host, $port )
 
 The C<on_node_disconnect> callback is called when the connection to specific
-node is closed by any reason. To callback are passed two arguments, host and
-port of the node.
+node is closed by any reason. To callback are passed two arguments: host and
+port of the node from which client was disconnected.
 
 Not set by default.
 
-=item on_node_connect_error => $cb->( $err, $host, $port )
-
 =item on_node_error => $cb->( $err, $host, $port )
+
+The C<on_node_error> callback is called when occurred an error, which was
+affected on entire node (e. g. connection error or authentication error). Also
+the C<on_node_error> callback can be called on command errors if the command
+callback is not specified. To callback are passed three arguments, error object,
+host and port of the node on which an error occurred.
+
+Not set by default.
 
 =item on_error => $cb->( $err )
 
 The C<on_error> callback is called when occurred an error, which was affected
-on whole client (e. g. nodes discovery error). Also the C<on_error> callback is
+on entire client (e. g. nodes discovery error). Also the C<on_error> callback is
 called on command errors if the command callback is not specified. If the
 C<on_error> callback is not specified, the client just print an error messages
 to C<STDERR>.
@@ -1174,12 +1153,23 @@ to C<STDERR>.
 
 The full list of the Redis commands can be found here: L<http://redis.io/commands>.
 
+To execute the command you must call specific method. The reply to the command
+is passed to the callback in first argument. If any error occurred during
+command execution, the error object is passed to the callback in second
+argument. Error object is an instance of the class L<AnyEvent::RipeRedis::Error>.
+
+The command callback is optional. If it is not specified and any error
+occurred, the C<on_error> callback of the client is called.
+
   $cluster->get( 'foo',
     sub {
       my $reply = shift;
       my $err   = shift;
 
       if ( defined $err ) {
+        my $err_msg  = $err->message;
+        my $err_code = $err->code;
+
         # error handling...
 
         return;
@@ -1195,6 +1185,9 @@ The full list of the Redis commands can be found here: L<http://redis.io/command
       my $err   = shift;
 
       if ( defined $err ) {
+        my $err_msg  = $err->message;
+        my $err_code = $err->code;
+
         # error handling...
 
         return;
@@ -1208,7 +1201,37 @@ The full list of the Redis commands can be found here: L<http://redis.io/command
 
   $cluster->incr( 'counter' );
 
-=head2 execute( $command, [ @args ] [, $cb->( $reply, $err ) ] )
+Additionaly if needed you can specify C<on_node_error> callback in command
+method.
+
+  $cluster->get( 'foo',
+    { on_reply => sub {
+        my $reply = shift;
+        my $err   = shift;
+
+        if ( defined $err ) {
+          my $err_msg  = $err->message;
+          my $err_code = $err->code;
+
+          # error handling...
+
+          return;
+        }
+
+        print "$reply\n";
+      },
+
+      on_node_error => sub {
+        my $err  = shift;
+        my $host = shift;
+        my $port = shift;
+
+        # error handling...
+      }
+    }
+  );
+
+=head2 execute( $command, [ @args ] [, ( $cb->( $reply, $err ) | \%cbs ) ] )
 
 An alternative method to execute commands. In some cases it can be more
 convenient.
@@ -1219,6 +1242,9 @@ convenient.
       my $err   = shift;
 
       if ( defined $err ) {
+        my $err_msg  = $err->message;
+        my $err_code = $err->code;
+
         # error handling...
 
         return;

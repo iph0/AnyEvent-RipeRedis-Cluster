@@ -18,6 +18,7 @@ WriteMakefile(
   },
   BUILD_REQUIRES => {
     'Test::More'  => '0.98',
+    'Test::Fatal' => '0.013',
   },
   META_MERGE => {
     resources => {
