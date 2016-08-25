@@ -1034,7 +1034,7 @@ of the cluster after connection.
 
 =item allow_slaves => $boolean
 
-If enabled, the client will randomly try to send read-only commands to slave
+If enabled, the client randomly will try to send read-only commands to slave
 nodes.
 
 =item utf8 => $boolean
@@ -1075,11 +1075,11 @@ Disabled by default.
 =item reconnect => $boolean
 
 If the connection to the node was lost and the parameter C<reconnect> is
-TRUE (default), the client try to restore the connection when you execute next
-command. The client try to reconnect only once and, if attempt fails, the error
-object is passed to command callback. If you need several attempts of the
-reconnection, you must retry a command from the callback as many times, as you
-need. Such behavior allows to control reconnection procedure.
+TRUE (default), the client will try to restore the connection when you execute
+next command. The client will try to reconnect only once and, if attempt fails,
+the error object is passed to command callback. If you need several attempts of
+the reconnection, you must retry a command from the callback as many times, as
+you need. Such behavior allows to control reconnection procedure.
 
 Enabled by default.
 
@@ -1115,7 +1115,7 @@ documentation on L<AnyEvent::Handle> for more information.
 
 The C<on_node_connect> callback is called when the connection to specific node
 is successfully established. To callback are passed two arguments: host and
-port of the node to which client was connected.
+port of the node to which the client was connected.
 
 Not set by default.
 
@@ -1123,7 +1123,7 @@ Not set by default.
 
 The C<on_node_disconnect> callback is called when the connection to specific
 node is closed by any reason. To callback are passed two arguments: host and
-port of the node from which client was disconnected.
+port of the node from which the client was disconnected.
 
 Not set by default.
 
@@ -1132,8 +1132,8 @@ Not set by default.
 The C<on_node_error> callback is called when occurred an error, which was
 affected on entire node (e. g. connection error or authentication error). Also
 the C<on_node_error> callback can be called on command errors if the command
-callback is not specified. To callback are passed three arguments, error object,
-host and port of the node on which an error occurred.
+callback is not specified. To callback are passed three arguments: error object,
+and host and port of the node on which an error occurred.
 
 Not set by default.
 
@@ -1151,15 +1151,21 @@ to C<STDERR>.
 
 =head2 <command>( [ @args ] [, ( $cb->( $reply, $err ) | \%cbs ) ] )
 
-The full list of the Redis commands can be found here: L<http://redis.io/commands>.
-
 To execute the command you must call specific method. The reply to the command
 is passed to the callback in first argument. If any error occurred during
-command execution, the error object is passed to the callback in second
+the command execution, the error object is passed to the callback in second
 argument. Error object is an instance of the class L<AnyEvent::RipeRedis::Error>.
+
+Before the command execution the client determines the pool of nodes, on which
+the command can be executed. The pool can contain the one or more nodes
+depending on the cluster configuration and command type. The client will try to
+execute the command on random node from the pool and, if the command failed on
+selected node, the client will try to execute it on another random node.
 
 The command callback is optional. If it is not specified and any error
 occurred, the C<on_error> callback of the client is called.
+
+The full list of the Redis commands can be found here: L<http://redis.io/commands>.
 
   $cluster->get( 'foo',
     sub {
@@ -1201,8 +1207,8 @@ occurred, the C<on_error> callback of the client is called.
 
   $cluster->incr( 'counter' );
 
-Additionaly if needed you can specify C<on_node_error> callback in command
-method.
+To track errors on specific nodes you can specify C<on_node_error> callback in
+command method.
 
   $cluster->get( 'foo',
     { on_reply => sub {
@@ -1256,9 +1262,17 @@ convenient.
 
 =head1 ERROR CODES
 
+Every error object, passed to callback, contain error code, which can be used
+for programmatic handling of errors. AnyEvent::RipeRedis::Cluster provides
+constants for error codes. They can be imported and used in expressions.
+
+  use AnyEvent::RipeRedis::Cluster qw( :err_codes );
+
+Full list of error codes see in documentation on L<AnyEvent::RipeRedis>.
+
 =head1 DISCONNECTION
 
-When the connection to the server is no longer needed you can close it in two
+When the connection to the cluster is no longer needed you can close it in two
 ways: call the method C<disconnect()> or just "forget" any references to an
 AnyEvent::RipeRedis::Cluster object, but in this case the client object is
 destroyed without calling any callbacks, including the C<on_disconnect>
@@ -1266,7 +1280,7 @@ callback, to avoid an unexpected behavior.
 
 =head2 disconnect()
 
-The method for synchronous disconnection. All uncompleted operations will be
+The method for disconnection. All uncompleted operations will be
 aborted.
 
 =head1 OTHER METHODS
