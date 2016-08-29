@@ -15,6 +15,13 @@ ev_loop(
     my $cv = shift;
 
     $cluster = new_cluster(
+      refresh_interval   => 5,
+      connection_timeout => 5,
+      read_timeout       => 5,
+      handle_params      => {
+        autocork => 1,
+      },
+
       on_node_connect => sub {
         my $host = shift;
         my $port = shift;
