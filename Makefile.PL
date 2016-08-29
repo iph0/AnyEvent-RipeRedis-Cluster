@@ -17,8 +17,9 @@ WriteMakefile(
     'ExtUtils::MakeMaker' => '6.64',
   },
   BUILD_REQUIRES => {
-    'Test::More'  => '0.98',
-    'Test::Fatal' => '0.013',
+    'Test::More'       => '0.98',
+    'Test::Fatal'      => '0.013',
+    'Test::MockObject' => '1.20150527',
   },
   META_MERGE => {
     resources => {
