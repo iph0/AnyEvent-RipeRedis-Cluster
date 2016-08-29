@@ -35,16 +35,20 @@ BEGIN {
     ],
 
     command => [
+      [ 'command', 0, [ qw( loading stale ) ], 0, 0, 0 ],
       [ 'set', -3, [ qw( write denyoom ) ], 1, 1, 1 ],
       [ 'get', '2', [ qw( readonly fast ) ], 1, 1, 1 ],
       [ 'client', -2, [ qw( admin noscript ) ], 0, 0, 0 ],
       [ 'hget', 3, [ qw( readonly fast ) ], 1, 1, 1 ],
+      [ 'evalsha', -3, [ qw( noscript movablekeys ) ], 0, 0, 0 ],
     ],
 
-    readonly       => 'OK',
-    set            => 'OK',
-    get            => "some\r\nstring",
-    client_getname => 'test',
+    readonly        => 'OK',
+    set             => 'OK',
+    get             => "some\r\nstring",
+    client_getname  => 'test',
+    command_getkeys => [qw( {key}1 {key}2 )],
+    eval_cached     => [qw( {key}1 {key}2 first second )],
   );
 
   Test::MockObject->fake_module( 'AnyEvent::RipeRedis',
@@ -82,7 +86,7 @@ BEGIN {
           }
           elsif ( $cmd_name eq 'exec' ) {
             $self->{_multi_mode} = 0;
-            $reply = [ qw( OK OK ) ];
+            $reply = [qw( OK OK )];
           }
           elsif ( $self->{_multi_mode} ) {
             $reply = 'QUEUED';
