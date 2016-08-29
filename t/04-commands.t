@@ -2,8 +2,10 @@ use 5.008000;
 use strict;
 use warnings;
 
-use Test::More tests => 9;
-require 't/test_helper.pl';
+use Test::More tests => 21;
+BEGIN {
+  require 't/test_helper.pl';
+}
 
 my @NODES_CONNECTED;
 my @NODES_DISCONNECTED;
@@ -62,6 +64,10 @@ is_deeply( \@NODES_CONNECTED,
 
 t_set($cluster);
 t_get($cluster);
+t_error_reply($cluster);
+t_default_on_error($cluster);
+t_global_on_node_error();
+t_on_node_error_for_command($cluster);
 t_transaction($cluster);
 t_multiword_command($cluster);
 t_execute($cluster);
@@ -126,6 +132,164 @@ sub t_get {
   return;
 }
 
+sub t_error_reply {
+  my $cluster = shift;
+
+  my $t_err;
+
+  ev_loop(
+    sub {
+      my $cv = shift;
+
+      $cluster->hget( 'foo', 'test',
+        sub {
+          my $reply = shift;
+          $t_err    = shift;
+
+          $cv->send;
+        }
+      );
+    }
+  );
+
+  my $t_npref = 'error reply';
+  isa_ok( $t_err, 'AnyEvent::RipeRedis::Error' );
+  ok( defined $t_err->message, "$t_npref; error message" );
+  is( $t_err->code, E_LOADING_DATASET, "$t_npref; error code" );
+
+  return;
+}
+
+sub t_default_on_error {
+  my $cluster = shift;
+
+  my $cv;
+  my $t_err_msg;
+
+  local $SIG{__WARN__} = sub {
+    $t_err_msg = shift;
+
+    chomp( $t_err_msg );
+
+    $cv->send;
+  };
+
+  ev_loop(
+    sub {
+      $cv = shift;
+
+      $cluster->hget( 'foo', 'test' );
+    }
+  );
+
+  ok( defined $t_err_msg, q{Default "on_error" callback} );
+
+  return;
+}
+
+sub t_global_on_node_error {
+  my $t_err;
+  my @t_node_errors;
+
+  my $cluster = new_cluster(
+    on_node_error => sub {
+      my $err  = shift;
+      my $host = shift;
+      my $port = shift;
+
+      push( @t_node_errors, [ $err, $host, $port ] );
+    }
+  );
+
+  ev_loop(
+    sub {
+      my $cv = shift;
+
+      $cluster->hget( 'foo', 'test',
+        sub {
+          my $reply = shift;
+          $t_err    = shift;
+
+          $cv->send;
+        }
+      );
+    }
+  );
+
+  my $t_npref = 'global "on_node_error"';
+  isa_ok( $t_err, 'AnyEvent::RipeRedis::Error' );
+  ok( defined $t_err->message, "$t_npref; error message" );
+  is( $t_err->code, E_LOADING_DATASET, "$t_npref; error code" );
+
+  my $err = AnyEvent::RipeRedis::Error->new(
+      q{LOADING Redis is loading the dataset in memory}, E_LOADING_DATASET );
+
+  @t_node_errors = sort {
+    $a->[1] cmp $b->[1] || $a->[2] <=> $b->[2]
+  } @t_node_errors;
+
+  is_deeply( \@t_node_errors,
+    [ [ $err, '127.0.0.1', 7002 ],
+      [ $err, '127.0.0.1', 7006 ],
+    ],
+    "$t_npref; node errors"
+  );
+
+  return;
+}
+
+sub t_on_node_error_for_command {
+  my $cluster = shift;
+
+  my $t_err;
+  my @t_node_errors;
+
+  ev_loop(
+    sub {
+      my $cv = shift;
+
+      $cluster->hget( 'foo', 'test',
+        { on_reply => sub {
+            my $reply = shift;
+            $t_err    = shift;
+
+            $cv->send;
+          },
+
+          on_node_error => sub {
+            my $err  = shift;
+            my $host = shift;
+            my $port = shift;
+
+            push( @t_node_errors, [ $err, $host, $port ] );
+          },
+        }
+      );
+    }
+  );
+
+  my $t_npref = '"on_node_error" for command';
+  isa_ok( $t_err, 'AnyEvent::RipeRedis::Error' );
+  ok( defined $t_err->message, "$t_npref; error message" );
+  is( $t_err->code, E_LOADING_DATASET, "$t_npref; error code" );
+
+  my $err = AnyEvent::RipeRedis::Error->new(
+      q{LOADING Redis is loading the dataset in memory}, E_LOADING_DATASET );
+
+  @t_node_errors = sort {
+    $a->[1] cmp $b->[1] || $a->[2] <=> $b->[2]
+  } @t_node_errors;
+
+  is_deeply( \@t_node_errors,
+    [ [ $err, '127.0.0.1', 7002 ],
+      [ $err, '127.0.0.1', 7006 ],
+    ],
+    "$t_npref; node errors"
+  );
+
+  return;
+}
+
 sub t_transaction {
   my $cluster = shift;
 
@@ -136,8 +300,8 @@ sub t_transaction {
       my $cv = shift;
 
       $cluster->multi;
-      $cluster->set('foo');
-      $cluster->set('bar');
+      $cluster->set( 'foo', "some\r\nstring" );
+      $cluster->set( 'bar', 42 );
       $cluster->exec(
         sub {
           $t_reply = shift;

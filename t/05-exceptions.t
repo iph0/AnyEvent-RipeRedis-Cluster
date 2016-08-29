@@ -4,8 +4,9 @@ use warnings;
 
 use Test::More tests => 6;
 use Test::Fatal;
-use AnyEvent::RipeRedis::Cluster;
-require 't/test_helper.pl';
+BEGIN {
+  require 't/test_helper.pl';
+}
 
 t_startup_nodes();
 t_refresh_interval();

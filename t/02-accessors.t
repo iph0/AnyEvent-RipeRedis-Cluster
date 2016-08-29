@@ -3,9 +3,10 @@ use strict;
 use warnings;
 
 use Test::More tests => 8;
-use AnyEvent::RipeRedis::Cluster qw( :err_codes );
 use AnyEvent::RipeRedis::Error;
-require 't/test_helper.pl';
+BEGIN {
+  require 't/test_helper.pl';
+}
 
 my $cluster = new_cluster(
   refresh_interval => 5,

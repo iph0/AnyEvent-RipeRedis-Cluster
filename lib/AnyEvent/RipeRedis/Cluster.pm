@@ -5,7 +5,7 @@ use strict;
 use warnings;
 use base qw( Exporter );
 
-our $VERSION = '0.01_03';
+our $VERSION = '0.01_04';
 
 use AnyEvent::RipeRedis;
 use AnyEvent::RipeRedis::Error;
@@ -18,7 +18,7 @@ use Carp qw( croak );
 our %ERROR_CODES;
 
 BEGIN {
-  our %ERROR_CODES = %AnyEvent::RipeRedis::ERROR_CODES;
+  %ERROR_CODES = %AnyEvent::RipeRedis::Error::ERROR_CODES;
   our @EXPORT_OK   = keys %ERROR_CODES;
   our %EXPORT_TAGS = ( err_codes => \@EXPORT_OK, );
 }
@@ -186,19 +186,19 @@ sub on_error {
 }
 
 sub crc16 {
-    my $str = shift;
+  my $data = shift;
 
-    unless ( utf8::downgrade( $str, 1 ) ) {
-      utf8::encode( $str );
-    }
+  unless ( utf8::downgrade( $data, 1 ) ) {
+    utf8::encode($data);
+  }
 
-    my $crc = 0;
-    foreach my $char ( split //, $str ) {
-      $crc = ( $crc << 8 & 0xffff )
-          ^ $CRC16_TAB[ ( ( $crc >> 8 ) ^ ord($char) ) & 0xff ];
-    }
+  my $crc = 0;
+  foreach my $char ( split //, $data ) {
+    $crc = ( $crc << 8 & 0xff00 )
+        ^ $CRC16_TAB[ ( ( $crc >> 8 ) ^ ord($char) ) & 0x00ff ];
+  }
 
-    return $crc;
+  return $crc;
 }
 
 sub _init {

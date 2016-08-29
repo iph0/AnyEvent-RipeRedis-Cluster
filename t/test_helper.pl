@@ -3,10 +3,12 @@ use strict;
 use warnings;
 
 use AnyEvent;
+use AnyEvent::RipeRedis::Error;
 use Test::MockObject;
+use Clone qw( clone );
 
 BEGIN {
-  my %predefined_replies = (
+  my %command_replies = (
     cluster_slots => [
       [ '0',
         '5961',
@@ -36,40 +38,24 @@ BEGIN {
       [ 'set', -3, [ qw( write denyoom ) ], 1, 1, 1 ],
       [ 'get', '2', [ qw( readonly fast ) ], 1, 1, 1 ],
       [ 'client', -2, [ qw( admin noscript ) ], 0, 0, 0 ],
+      [ 'hget', 3, [ qw( readonly fast ) ], 1, 1, 1 ],
     ],
 
     readonly       => 'OK',
     set            => 'OK',
     get            => "some\r\nstring",
     client_getname => 'test',
-    multi          => 'OK',
-    exec           => [ qw( OK OK ) ],
   );
 
   Test::MockObject->fake_module( 'AnyEvent::RipeRedis',
-    import => sub {
-      no strict qw( refs );
-
-      my %error_codes = (
-        E_CONN_CLOSED_BY_CLIENT => 5,
-        E_ASK                   => 25,
-        E_MOVED                 => 26,
-      );
-
-      my $caller = caller;
-      while ( my ( $name, $err_code ) = each %error_codes ) {
-        *{"${caller}::$name"} = sub {
-          return $err_code;
-        };
-      }
-    },
-
     new => sub {
       my $class  = shift;
       my %params = @_;
 
       my $mock = Test::MockObject->new({});
 
+      $mock->{host}          = $params{host};
+      $mock->{port}          = $params{port};
       $mock->{on_connect}    = $params{on_connect};
       $mock->{on_disconnect} = $params{on_disconnect};
 
@@ -81,28 +67,36 @@ BEGIN {
           my $self     = shift;
           my $cmd_name = shift;
           my $cbs      = pop;
+          my @args     = @_;
 
           unless ( $self->{_connected} ) {
             $self->_connect;
           }
 
+          my $reply;
+          my $err;
+
           if ( $cmd_name eq 'multi' ) {
             $self->{_multi_mode} = 1;
+            $reply = 'OK';
           }
-          elsif ( $cmd_name eq 'exec'
-            || $cmd_name eq 'discard' )
-          {
+          elsif ( $cmd_name eq 'exec' ) {
             $self->{_multi_mode} = 0;
+            $reply = [ qw( OK OK ) ];
+          }
+          elsif ( $self->{_multi_mode} ) {
+            $reply = 'QUEUED';
+          }
+          elsif ( $cmd_name eq 'hget' ) {
+            $err = AnyEvent::RipeRedis::Error->new(
+                q{LOADING Redis is loading the dataset in memory}, 2 );
+          }
+          else {
+            $reply = clone( $command_replies{$cmd_name} );
           }
 
           AE::postpone {
-            my $reply
-                = $self->{_multi_mode}
-                    && $cmd_name ne 'exec' && $cmd_name ne 'discard'
-                ? 'QUEUED'
-                : $predefined_replies{$cmd_name};
-
-            $cbs->{on_reply}->( $predefined_replies{$cmd_name} )
+            $cbs->{on_reply}->( $reply, $err );
           };
         }
       );
@@ -113,6 +107,15 @@ BEGIN {
           $self->{on_disconnect}->();
         }
       );
+
+      foreach my $name ( qw( host port ) ) {
+        $mock->mock( $name,
+          sub {
+            my $self = shift;
+            return $self->{$name};
+          }
+        );
+      }
 
       $mock->mock( '_connect',
         sub {
@@ -134,7 +137,7 @@ BEGIN {
   *CORE::GLOBAL::rand = sub { return 1 };
 }
 
-use AnyEvent::RipeRedis::Cluster;
+use AnyEvent::RipeRedis::Cluster qw( :err_codes );
 
 sub new_cluster {
   my %params = @_;

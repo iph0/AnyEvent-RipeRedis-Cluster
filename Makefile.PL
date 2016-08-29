@@ -7,7 +7,7 @@ WriteMakefile(
   VERSION_FROM     => 'lib/AnyEvent/RipeRedis/Cluster.pm',
   MIN_PERL_VERSION => '5.008000',
   PREREQ_PM        => {
-    'AnyEvent::RipeRedis' => '0.08',
+    'AnyEvent::RipeRedis' => '0.16',
     'AnyEvent'            => '6.01',
     'List::MoreUtils'     => '0.416',
     'Scalar::Util'        => '0',
@@ -20,6 +20,7 @@ WriteMakefile(
     'Test::More'       => '0.98',
     'Test::Fatal'      => '0.013',
     'Test::MockObject' => '1.20150527',
+    'Clone'            => '0.38',
   },
   META_MERGE => {
     resources => {
