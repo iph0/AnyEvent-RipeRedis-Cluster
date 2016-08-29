@@ -2,7 +2,7 @@ use 5.008000;
 use strict;
 use warnings;
 
-use Test::More tests => 8;
+use Test::More tests => 9;
 require 't/test_helper.pl';
 
 my @NODES_CONNECTED;
@@ -213,6 +213,8 @@ sub t_execute {
 
 sub t_disconnect {
   my $cluster = shift;
+
+  can_ok( $cluster, 'disconnect' );
 
   $cluster->disconnect;
 
