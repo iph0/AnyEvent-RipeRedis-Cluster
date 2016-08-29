@@ -1,4 +1,3 @@
-dev/
 *.core
 blib/
 _build*
@@ -12,6 +11,7 @@ nytprof.out
 .lwpcookies
 Makefile
 Makefile.old
+MANIFEST
 MANIFEST.bak
 MANIFEST.skip
 pm_to_blib
@@ -24,5 +24,5 @@ META.yml
 MYMETA.json
 MYMETA.yml
 inc/
+AnyEvent-RipeRedis-*
 *.swp
-

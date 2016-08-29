@@ -89,6 +89,9 @@ sub new {
   unless ( ref( $params{startup_nodes} ) eq 'ARRAY' ) {
     croak 'Startup nodes must be specified as array reference';
   }
+  unless ( @{ $params{startup_nodes} } ) {
+    croak 'Specified empty list of startup nodes';
+  }
 
   $self->{startup_nodes} = $params{startup_nodes};
   $self->{allow_slaves}
@@ -320,7 +323,7 @@ sub _prepare_nodes_pool {
           $nodes_pool{$hostport} = $old_nodes_pool->{$hostport};
         }
         else {
-          $nodes_pool{$hostport} = $self->_new_node( @{$node_info} );
+          $nodes_pool{$hostport} = $self->_new_node( @{$node_info}[ 0, 1 ] );
 
           unless ($is_master) {
             push( @slaves, $hostport );
@@ -367,7 +370,7 @@ sub _prepare_slaves {
     args => [],
 
     on_reply => sub {
-      return unless --$reply_cnt == 0;
+      return if --$reply_cnt > 0;
       $cb->();
     }
   };
@@ -702,7 +705,7 @@ sub _get_route {
   if ( defined $self->{_forced_slot} ) {
     my $slot = $self->{_forced_slot};
 
-    if ( $cmd_info->{unforcing_slot} ) {
+    if ( defined $cmd_info && $cmd_info->{unforcing_slot} ) {
       undef $self->{_forced_slot};
     }
 
@@ -722,7 +725,7 @@ sub _get_route {
 
       my $slot = _get_slot($key);
 
-      if ( $cmd_info->{forcing_slot}
+      if ( ( defined $cmd_info && $cmd_info->{forcing_slot} )
         || defined $self->{_deferred_multi} )
       {
         $self->{_forced_slot} = $slot;
@@ -741,9 +744,13 @@ sub _get_key {
   my $cb   = shift;
 
   my $cmd_info = $self->{_commands}{ $cmd->{kwds}[0] };
-  my @args     = ( @{ $cmd->{kwds} }, @{ $cmd->{args} } );
 
-  my $key;
+  unless ( defined $cmd_info ) {
+    $cb->();
+    return;
+  }
+
+  my @args = ( @{ $cmd->{kwds} }, @{ $cmd->{args} } );
 
   if ( $cmd_info->{movablekeys} ) {
     my @nodes
@@ -766,10 +773,11 @@ sub _get_key {
           }
 
           if ( @{$keys} ) {
-            $key = $keys->[0];
+            $cb->( $keys->[0] );
           }
-
-          $cb->($key);
+          else {
+            $cb->();
+          }
         }
       },
       @nodes,
@@ -777,11 +785,13 @@ sub _get_key {
 
     return;
   }
-  elsif ( $cmd_info->{key} > 0 ) {
-    $key = $args[ $cmd_info->{key} ];
-  }
 
-  $cb->($key);
+  if ( $cmd_info->{key} > 0 ) {
+    $cb->( $args[ $cmd_info->{key} ] );
+  }
+  else {
+    $cb->();
+  }
 
   return;
 }
@@ -1207,8 +1217,8 @@ The full list of the Redis commands can be found here: L<http://redis.io/command
 
   $cluster->incr( 'counter' );
 
-To track errors on specific nodes you can specify C<on_node_error> callback in
-command method.
+If you want to track errors on specific nodes, you must specify C<on_node_error>
+callback in command method.
 
   $cluster->get( 'foo',
     { on_reply => sub {
