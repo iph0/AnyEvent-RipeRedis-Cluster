@@ -85,7 +85,7 @@ sub t_set {
     }
   );
 
-  is( $t_reply, 'OK', 'SET' );
+  is( $t_reply, 'OK', 'write; SET' );
 
   return;
 }
@@ -114,7 +114,7 @@ sub t_get {
     }
   );
 
-  is( $t_reply, "some\r\nstring", 'GET' );
+  is( $t_reply, "some\r\nstring", 'reading; GET' );
 
   return;
 }
@@ -146,7 +146,7 @@ sub t_transaction {
     }
   );
 
-  is_deeply( $t_reply, [ 'OK', 'OK' ], 'transaction' );
+  is_deeply( $t_reply, [ 'OK', 'OK' ], 'transaction; MULTI/EXEC' );
 
   return;
 }
@@ -175,7 +175,7 @@ sub t_multiword_command {
     }
   );
 
-  is_deeply( $t_reply, 'test', 'multiword command' );
+  is_deeply( $t_reply, 'test', 'multiword command; CLIENT GETNAME' );
 
   return;
 }
