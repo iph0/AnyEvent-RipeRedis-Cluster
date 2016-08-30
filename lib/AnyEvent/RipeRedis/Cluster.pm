@@ -5,7 +5,7 @@ use strict;
 use warnings;
 use base qw( Exporter );
 
-our $VERSION = '0.02';
+our $VERSION = '0.03_01';
 
 use AnyEvent::RipeRedis;
 use AnyEvent::RipeRedis::Error;
@@ -1046,10 +1046,14 @@ of the cluster after connection.
 
 If enabled, the client will try to send read-only commands to slave nodes.
 
+Enabled by default.
+
 =item utf8 => $boolean
 
 If enabled, all strings will be converted to UTF-8 before sending to nodes,
 and all results will be decoded from UTF-8.
+
+Enabled by default.
 
 =item connection_timeout => $fractional_seconds
 
@@ -1168,9 +1172,10 @@ L<AnyEvent::RipeRedis::Error>.
 
 Before the command execution, the client determines the pool of nodes, on which
 the command can be executed. The pool can contain the one or more nodes
-depending on the cluster configuration and command type. The client will try to
-execute the command on random node from the pool and, if the command failed on
-selected node, the client will try to execute it on another random node.
+depending on the cluster and client configuration and command type. The client
+will try to execute the command on random node from the pool and, if the
+command failed on selected node, the client will try to execute it on another
+random node.
 
 The command callback is optional. If it is not specified and any error
 occurred, the C<on_error> callback of the client is called.
@@ -1316,14 +1321,13 @@ L<AnyEvent::RipeRedis>
 
 =head1 AUTHOR
 
-Eugene Ponizovsky, E<lt>ponizovsky@gmail.comE<gt>
+Eugene Ponizovsky E<lt>ponizovsky@gmail.comE<gt>
 
-Sponsored by SMS Online, E<lt>dev.opensource@sms-online.comE<gt>
+Sponsored by SMS Online E<lt>dev.opensource@sms-online.comE<gt>
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 2016, Eugene Ponizovsky, E<lt>ponizovsky@gmail.comE<gt>,
-SMS Online, E<lt>dev.opensource@sms-online.comE<gt>. All rights reserved.
+Copyright (c) 2016, Eugene Ponizovsky, SMS Online. All rights reserved.
 
 This module is free software; you can redistribute it and/or modify it under
 the same terms as Perl itself.

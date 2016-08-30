@@ -2,7 +2,7 @@ use 5.008000;
 use strict;
 use warnings;
 
-use Test::More tests => 6;
+use Test::More tests => 7;
 use Test::Fatal;
 BEGIN {
   require 't/test_helper.pl';
@@ -29,6 +29,16 @@ sub t_startup_nodes {
     },
     qr/Startup nodes must be specified as array reference/,
     'Startup nodes in invalid format (hash reference)'
+  );
+
+  like(
+    exception {
+      my $cluster = AnyEvent::RipeRedis::Cluster->new(
+        startup_nodes => [],
+      );
+    },
+    qr/Specified empty list of startup nodes/,
+    'Empty list of startup nodes'
   );
 }
 

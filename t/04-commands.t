@@ -71,7 +71,7 @@ t_on_node_error_for_command($cluster);
 t_transaction($cluster);
 t_multiword_command($cluster);
 t_movable_keys($cluster);
-t_execute($cluster);
+t_execute_method($cluster);
 t_disconnect($cluster);
 
 
@@ -382,7 +382,7 @@ sub t_movable_keys {
   return;
 }
 
-sub t_execute {
+sub t_execute_method {
   my $cluster = shift;
 
   can_ok( $cluster, 'execute' );
@@ -408,7 +408,7 @@ sub t_execute {
     }
   );
 
-  is( $t_reply, 'OK', 'execute' );
+  is( $t_reply, 'OK', 'execute method' );
 
   return;
 }
