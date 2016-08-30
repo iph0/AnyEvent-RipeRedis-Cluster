@@ -1,1 +1,4 @@
 Revision history for AnyEvent::RipeRedis::Cluster.
+
+0.02 Tue Aug 30 11:00:00 MSK 2016
+  - First release.

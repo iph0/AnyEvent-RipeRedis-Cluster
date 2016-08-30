@@ -5,7 +5,7 @@ use strict;
 use warnings;
 use base qw( Exporter );
 
-our $VERSION = '0.01_05';
+our $VERSION = '0.02';
 
 use AnyEvent::RipeRedis;
 use AnyEvent::RipeRedis::Error;
@@ -1044,8 +1044,7 @@ of the cluster after connection.
 
 =item allow_slaves => $boolean
 
-If enabled, the client randomly will try to send read-only commands to slave
-nodes.
+If enabled, the client will try to send read-only commands to slave nodes.
 
 =item utf8 => $boolean
 
@@ -1161,12 +1160,13 @@ to C<STDERR>.
 
 =head2 <command>( [ @args ] [, ( $cb->( $reply, $err ) | \%cbs ) ] )
 
-To execute the command you must call specific method. The reply to the command
-is passed to the callback in first argument. If any error occurred during
-the command execution, the error object is passed to the callback in second
-argument. Error object is an instance of the class L<AnyEvent::RipeRedis::Error>.
+To execute the command you must call specific method with corresponding name.
+The reply to the command is passed to the callback in first argument. If any
+error occurred during the command execution, the error object is passed to the
+callback in second argument. Error object is an instance of the class
+L<AnyEvent::RipeRedis::Error>.
 
-Before the command execution the client determines the pool of nodes, on which
+Before the command execution, the client determines the pool of nodes, on which
 the command can be executed. The pool can contain the one or more nodes
 depending on the cluster configuration and command type. The client will try to
 execute the command on random node from the pool and, if the command failed on
