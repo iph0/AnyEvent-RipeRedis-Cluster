@@ -5,7 +5,7 @@ use strict;
 use warnings;
 use base qw( Exporter );
 
-our $VERSION = '0.03_01';
+our $VERSION = '0.03_02';
 
 use AnyEvent::RipeRedis;
 use AnyEvent::RipeRedis::Error;
@@ -1321,9 +1321,9 @@ L<AnyEvent::RipeRedis>
 
 =head1 AUTHOR
 
-Eugene Ponizovsky E<lt>ponizovsky@gmail.comE<gt>
+Eugene Ponizovsky, E<lt>ponizovsky@gmail.comE<gt>
 
-Sponsored by SMS Online E<lt>dev.opensource@sms-online.comE<gt>
+Sponsored by SMS Online, E<lt>dev.opensource@sms-online.comE<gt>
 
 =head1 COPYRIGHT AND LICENSE
 

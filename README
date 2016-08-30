@@ -1,4 +1,4 @@
-AnyEvent-RipeRedis-Cluster version 0.03_01
+AnyEvent-RipeRedis-Cluster version 0.03_02
 ======================
 
 INSTALLATION
@@ -24,9 +24,9 @@ For more information about Redis Cluster see here:
 
 AUTHOR
 
-Eugene Ponizovsky <ponizovsky@gmail.com>
+Eugene Ponizovsky, <ponizovsky@gmail.com>
 
-Sponsored by SMS Online <dev.opensource@sms-online.com>
+Sponsored by SMS Online, <dev.opensource@sms-online.com>
 
 COPYRIGHT AND LICENSE
 
