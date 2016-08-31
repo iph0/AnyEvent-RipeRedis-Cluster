@@ -5,7 +5,7 @@ use strict;
 use warnings;
 use base qw( Exporter );
 
-our $VERSION = '0.04';
+our $VERSION = '0.05_01';
 
 use AnyEvent::RipeRedis;
 use AnyEvent::RipeRedis::Error;
@@ -405,14 +405,14 @@ sub _discover_commands {
         my %commands;
 
         foreach my $cmd_raw ( @{$commands_raw} ) {
-          my $kwd     = lc( $cmd_raw->[0] );
-          my $flags   = $cmd_raw->[2];
+          my $kwd       = lc( $cmd_raw->[0] );
+          my $flags     = $cmd_raw->[2];
           my $key_pos = $cmd_raw->[3];
 
           my $cmd_info = {
             readonly    => 0,
             movablekeys => 0,
-            key         => $key_pos,
+            key_pos     => $key_pos,
           };
 
           foreach my $flag ( @{$flags} ) {
@@ -635,56 +635,53 @@ sub _execute {
 
   weaken($self);
 
-  my $on_reply = sub {
-    my $reply = shift;
-    my $err   = shift;
-
-    if ( defined $err ) {
-      my $err_code   = $err->code;
-      my $nodes_pool = $self->{_nodes_pool};
-
-      if ( $err_code == E_MOVED || $err_code == E_ASK ) {
-        if ( $err_code == E_MOVED ) {
-          $self->{_init_state} = S_NEED_DO;
-          $self->{_ready}      = 0;
-        }
-
-        my ($fwd_hostport) = ( split( m/\s+/, $err->message ) )[2];
-
-        unless ( defined $nodes_pool->{$fwd_hostport} ) {
-          my ( $host, $port ) = parse_hostport($fwd_hostport);
-          $nodes_pool->{$fwd_hostport} = $self->_new_node( $host, $port );
-        }
-
-        $self->_execute( $cmd, $fwd_hostport );
-
-        return;
-      }
-
-      my $on_node_error = $cmd->{on_node_error} || $self->{on_node_error};
-
-      if ( defined $on_node_error ) {
-        my $node = $nodes_pool->{$hostport};
-        $on_node_error->( $err, $node->host, $node->port );
-      }
-
-      if ( $err_code != E_CONN_CLOSED_BY_CLIENT && @nodes ) {
-        $self->_execute( $cmd, @nodes );
-        return;
-      }
-
-      $cmd->{on_reply}->( $reply, $err );
-
-      return;
-    }
-
-    $cmd->{on_reply}->($reply);
-
-    return;
-  };
-
   $node->execute( $cmd->{name}, @{ $cmd->{args} },
-    { on_reply => $on_reply,
+    { on_reply => sub {
+        my $reply = shift;
+        my $err   = shift;
+
+        if ( defined $err ) {
+          my $err_code   = $err->code;
+          my $nodes_pool = $self->{_nodes_pool};
+
+          if ( $err_code == E_MOVED || $err_code == E_ASK ) {
+            if ( $err_code == E_MOVED ) {
+              $self->{_init_state} = S_NEED_DO;
+              $self->{_ready}      = 0;
+            }
+
+            my ($fwd_hostport) = ( split( m/\s+/, $err->message ) )[2];
+
+            unless ( defined $nodes_pool->{$fwd_hostport} ) {
+              my ( $host, $port ) = parse_hostport($fwd_hostport);
+              $nodes_pool->{$fwd_hostport} = $self->_new_node( $host, $port );
+            }
+
+            $self->_execute( $cmd, $fwd_hostport );
+
+            return;
+          }
+
+          my $on_node_error = $cmd->{on_node_error} || $self->{on_node_error};
+          if ( defined $on_node_error ) {
+            my $node = $nodes_pool->{$hostport};
+            $on_node_error->( $err, $node->host, $node->port );
+          }
+
+          if ( $err_code != E_CONN_CLOSED_BY_CLIENT && @nodes ) {
+            $self->_execute( $cmd, @nodes );
+            return;
+          }
+
+          $cmd->{on_reply}->( $reply, $err );
+
+          return;
+        }
+
+        $cmd->{on_reply}->($reply);
+
+        return;
+      },
 
       defined $cmd->{on_message}
       ? ( on_message => $cmd->{on_message} )
@@ -750,8 +747,6 @@ sub _get_key {
     return;
   }
 
-  my @args = ( @{ $cmd->{kwds} }, @{ $cmd->{args} } );
-
   if ( $cmd_info->{movablekeys} ) {
     my @nodes
         = $self->{allow_slaves}
@@ -759,8 +754,8 @@ sub _get_key {
         : @{ $self->{_masters} };
 
     $self->_execute(
-      { name          => 'command_getkeys',
-        args          => [@args],
+      { name => 'command_getkeys',
+        args => [ @{ $cmd->{kwds} }, @{ $cmd->{args} } ],
         on_node_error => $cmd->{on_node_error},
 
         on_reply => sub {
@@ -786,8 +781,11 @@ sub _get_key {
     return;
   }
 
-  if ( $cmd_info->{key} > 0 ) {
-    $cb->( $args[ $cmd_info->{key} ] );
+  if ( $cmd_info->{key_pos} > 0 ) {
+    my @tokens = ( @{ $cmd->{kwds} }, @{ $cmd->{args} } );
+    my $key    = $tokens[ $cmd_info->{key_pos} ];
+
+    $cb->($key);
   }
   else {
     $cb->();
