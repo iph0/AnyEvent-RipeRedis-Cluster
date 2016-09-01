@@ -1197,6 +1197,35 @@ convenient.
     }
   );
 
+=head1 TRANSACTIONS
+
+The client sends all commands of the transaction to the one master node,
+which will be selected by the hash tag in C<MULTI> command or by the first key
+in the C<WATCH> command. The hash tag of the C<MULTI> command is an extension
+of the client and it not transfered to the Redis server.
+
+  $cluster->multi('foo');
+  $cluster->set( '{foo}bar', "some\r\nstring" );
+  $cluster->set( '{foo}car', 42 );
+  $cluster->exec(
+    sub {
+      my $reply = shift;
+      my $err   = shift;
+
+      if ( defined $err ) {
+        # error handling...
+
+        return;
+      }
+
+      # reply handling...
+    }
+  );
+
+The detailed information about the Redis transactions can be found in
+documentation on L<AnyEvent::RipeRedis> and here:
+L<http://redis.io/topics/transactions>.
+
 =head1 ERROR CODES
 
 Every error object, passed to callback, contain error code, which can be used

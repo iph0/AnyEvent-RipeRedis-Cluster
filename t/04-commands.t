@@ -300,9 +300,9 @@ sub t_transaction {
     sub {
       my $cv = shift;
 
-      $cluster->multi( 'foo' );
-      $cluster->set( '{foo}1', "some\r\nstring" );
-      $cluster->set( '{foo}2', 42 );
+      $cluster->multi('foo');
+      $cluster->set( '{foo}bar', "some\r\nstring" );
+      $cluster->set( '{foo}car', 42 );
       $cluster->exec(
         sub {
           $t_reply = shift;
