@@ -5,7 +5,7 @@ use strict;
 use warnings;
 use base qw( Exporter );
 
-our $VERSION = '0.05_02';
+our $VERSION = '0.05_03';
 
 use AnyEvent::RipeRedis;
 use AnyEvent::RipeRedis::Error;
@@ -1202,7 +1202,7 @@ convenient.
 The client sends all commands of the transaction to the one master node,
 which will be selected by the hash tag in C<MULTI> command or by the first key
 in the C<WATCH> command. The hash tag of the C<MULTI> command is an extension
-of the client and it not transfered to the Redis server.
+of the client and it is not transferred to the Redis server.
 
   $cluster->multi('foo');
   $cluster->set( '{foo}bar', "some\r\nstring" );

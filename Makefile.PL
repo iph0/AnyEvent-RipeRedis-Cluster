@@ -7,7 +7,7 @@ WriteMakefile(
   VERSION_FROM     => 'lib/AnyEvent/RipeRedis/Cluster.pm',
   MIN_PERL_VERSION => '5.008000',
   PREREQ_PM        => {
-    'AnyEvent::RipeRedis' => '0.24',
+    'AnyEvent::RipeRedis' => '0.22',
     'AnyEvent'            => '6.01',
     'List::MoreUtils'     => '0.416',
     'Scalar::Util'        => '0',
