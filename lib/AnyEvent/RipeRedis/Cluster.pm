@@ -415,7 +415,7 @@ sub _discover_commands {
           return;
         }
 
-        my %commands;
+        my %commands = %PREDEFINED_CMDS;
 
         foreach my $cmd_raw ( @{$commands_raw} ) {
           my $kwd = lc( $cmd_raw->[0] );
@@ -436,10 +436,7 @@ sub _discover_commands {
           };
         }
 
-        $self->{_commands} = {
-          %PREDEFINED_CMDS,
-          %commands,
-        };
+        $self->{_commands} = \%commands;
 
         $cb->();
       }
