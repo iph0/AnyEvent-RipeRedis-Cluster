@@ -5,7 +5,7 @@ use strict;
 use warnings;
 use base qw( Exporter );
 
-our $VERSION = '0.05_03';
+our $VERSION = '0.05_04';
 
 use AnyEvent::RipeRedis;
 use AnyEvent::RipeRedis::Error;
@@ -121,6 +121,7 @@ sub new {
   foreach my $name ( qw( password utf8 connection_timeout read_timeout
       reconnect min_reconnect_interval handle_params ) )
   {
+    next unless defined $params{$name};
     $node_params{$name} = $params{$name};
   }
   $self->{_node_params} = \%node_params;
