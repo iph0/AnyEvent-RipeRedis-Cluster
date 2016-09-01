@@ -77,13 +77,11 @@ my %PREDEFINED_CMDS = (
   zinterstore => { readonly => 0, key_pos => 3 },
   eval        => { readonly => 0, key_pos => 3 },
   evalsha     => { readonly => 0, key_pos => 3 },
-
-  multi => { readonly => 0, key_pos => 1, force_slot => 1 },
-  watch => { readonly => 0, key_pos => 1, force_slot => 1 },
-
-  exec    => { readonly => 0, key_pos => 0, unforce_slot => 1 },
-  discard => { readonly => 0, key_pos => 0, unforce_slot => 1 },
-  unwatch => { readonly => 0, key_pos => 0, unforce_slot => 1 },
+  multi       => { readonly => 0, key_pos => 1, force_slot => 1 },
+  watch       => { readonly => 0, key_pos => 1, force_slot => 1 },
+  exec        => { readonly => 0, key_pos => 0, unforce_slot => 1 },
+  discard     => { readonly => 0, key_pos => 0, unforce_slot => 1 },
+  unwatch     => { readonly => 0, key_pos => 0, unforce_slot => 1 },
 );
 
 my %SUB_CMDS = (
