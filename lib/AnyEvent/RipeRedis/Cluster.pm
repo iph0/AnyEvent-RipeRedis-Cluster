@@ -5,7 +5,7 @@ use strict;
 use warnings;
 use base qw( Exporter );
 
-our $VERSION = '0.05_01';
+our $VERSION = '0.05_02';
 
 use AnyEvent::RipeRedis;
 use AnyEvent::RipeRedis::Error;
@@ -71,7 +71,22 @@ my @CRC16_TAB = (
   0x6e17, 0x7e36, 0x4e55, 0x5e74, 0x2e93, 0x3eb2, 0x0ed1, 0x1ef0,
 );
 
-my %SUB_COMMANDS = (
+my %PREDEFINED_CMDS = (
+  sort        => { readonly => 0, key_pos => 1 },
+  zunionstore => { readonly => 0, key_pos => 3 },
+  zinterstore => { readonly => 0, key_pos => 3 },
+  eval        => { readonly => 0, key_pos => 3 },
+  evalsha     => { readonly => 0, key_pos => 3 },
+
+  multi => { readonly => 0, key_pos => 1, force_slot => 1 },
+  watch => { readonly => 0, key_pos => 1, force_slot => 1 },
+
+  exec    => { readonly => 0, key_pos => 0, unforce_slot => 1 },
+  discard => { readonly => 0, key_pos => 0, unforce_slot => 1 },
+  unwatch => { readonly => 0, key_pos => 0, unforce_slot => 1 },
+);
+
+my %SUB_CMDS = (
   subscribe  => 1,
   psubscribe => 1,
 );
@@ -405,33 +420,28 @@ sub _discover_commands {
         my %commands;
 
         foreach my $cmd_raw ( @{$commands_raw} ) {
-          my $kwd       = lc( $cmd_raw->[0] );
-          my $flags     = $cmd_raw->[2];
-          my $key_pos = $cmd_raw->[3];
+          my $kwd = lc( $cmd_raw->[0] );
 
-          my $cmd_info = {
-            readonly    => 0,
-            movablekeys => 0,
-            key_pos     => $key_pos,
-          };
+          next if exists $PREDEFINED_CMDS{$kwd};
 
-          foreach my $flag ( @{$flags} ) {
+          my $readonly = 0;
+          foreach my $flag ( @{ $cmd_raw->[2] } ) {
             if ( $flag eq 'readonly' ) {
-              $cmd_info->{readonly} = 1;
-            }
-            if ( $flag eq 'movablekeys' ) {
-              $cmd_info->{movablekeys} = 1;
+              $readonly = 1;
+              last;
             }
           }
 
-          $commands{$kwd} = $cmd_info;
-        }
-        $commands{watch}{forcing_slot} = 1;
-        foreach my $kwd ( qw( exec discard unwatch ) ) {
-          $commands{$kwd}{unforcing_slot} = 1;
+          $commands{$kwd} = {
+            readonly => $readonly,
+            key_pos  => $cmd_raw->[3],
+          };
         }
 
-        $self->{_commands} = \%commands;
+        $self->{_commands} = {
+          %PREDEFINED_CMDS,
+          %commands,
+        };
 
         $cb->();
       }
@@ -517,7 +527,7 @@ sub _prepare {
   else {
     $cbs = {};
     if ( ref( $args->[-1] ) eq 'CODE' ) {
-      if ( exists $SUB_COMMANDS{$cmd_name} ) {
+      if ( exists $SUB_CMDS{$cmd_name} ) {
         $cbs->{on_message} = pop @{$args};
       }
       else {
@@ -557,6 +567,12 @@ sub _route {
   my $self = shift;
   my $cmd  = shift;
 
+  if ( $cmd->{name} eq 'multi'
+    && !defined $cmd->{args}[0] )
+  {
+    croak 'Hash tag for "multi" command not specified';
+  }
+
   unless ( $self->{_ready} ) {
     if ( $self->{_init_state} == S_NEED_DO ) {
       $self->_init;
@@ -567,53 +583,67 @@ sub _route {
     return;
   }
 
-  if ( $cmd->{name} eq 'multi'
-    && !defined $self->{_forced_slot} )
-  {
-    $self->{_deferred_multi} = $cmd;
-    return;
+  my $cmd_info = $self->{_commands}{ $cmd->{kwds}[0] };
+
+  my $slot;
+  my $allow_slaves;
+
+  if ( defined $self->{_forced_slot} ) {
+    $slot = $self->{_forced_slot};
+    $cmd->{is_forced_slot} = 1;
+
+    if ( defined $cmd_info && $cmd_info->{unforce_slot} ) {
+      undef $self->{_forced_slot};
+    }
+  }
+  else {
+    my $key;
+
+    if ( defined $cmd_info ) {
+      my @tokens = ( @{ $cmd->{kwds} }, @{ $cmd->{args} } );
+      $key = $tokens[ $cmd_info->{key_pos} ];
+    }
+
+    $allow_slaves = $self->{allow_slaves};
+
+    if ( defined $key ) {
+      $slot = _get_slot($key);
+
+      if ( $cmd_info->{force_slot}
+        && !defined $self->{_forced_slot} )
+      {
+        $self->{_forced_slot} = $slot;
+      }
+
+      $allow_slaves &&= $cmd_info->{readonly};
+    }
   }
 
-  weaken($self);
+  my @nodes;
 
-  $self->_get_route( $cmd,
-    sub {
-      my $slot         = shift;
-      my $allow_slaves = shift;
-
-      my @nodes;
-
-      if ( defined $slot ) {
-        if ( defined $self->{_deferred_multi} ) {
-          my $multi = $self->{_deferred_multi};
-          undef $self->{_deferred_multi};
-          $self->_route($multi);
-
-          $self->_route($cmd);
-
-          return;
-        }
-
-        my ($range) = bsearch {
-          $slot > $_->[1] ? -1 : $slot < $_->[0] ? 1 : 0;
-        }
-        @{ $self->{_slots} };
-
-        @nodes
-            = $allow_slaves
-            ? @{ $range->[2] }
-            : ( $range->[2][0] );
-      }
-      else {
-        @nodes
-            = $allow_slaves
-            ? keys %{ $self->{_nodes_pool} }
-            : @{ $self->{_masters} };
-      }
-
-      $self->_execute( $cmd, @nodes );
+  if ( defined $slot ) {
+    my ($range) = bsearch {
+      $slot > $_->[1] ? -1 : $slot < $_->[0] ? 1 : 0;
     }
-  );
+    @{ $self->{_slots} };
+
+    @nodes
+        = $allow_slaves
+        ? @{ $range->[2] }
+        : ( $range->[2][0] );
+  }
+  else {
+    @nodes
+        = $allow_slaves
+        ? keys %{ $self->{_nodes_pool} }
+        : @{ $self->{_masters} };
+  }
+
+  if ( $cmd->{name} eq 'multi' ) {
+    $cmd->{args} = [];
+  }
+
+  $self->_execute( $cmd, @nodes );
 
   return;
 }
@@ -644,7 +674,9 @@ sub _execute {
           my $err_code   = $err->code;
           my $nodes_pool = $self->{_nodes_pool};
 
-          if ( $err_code == E_MOVED || $err_code == E_ASK ) {
+          if ( ( $err_code == E_MOVED || $err_code == E_ASK )
+            && !$cmd->{is_forced_slot} )
+          {
             if ( $err_code == E_MOVED ) {
               $self->{_init_state} = S_NEED_DO;
               $self->{_ready}      = 0;
@@ -692,108 +724,6 @@ sub _execute {
   return;
 }
 
-sub _get_route {
-  my $self = shift;
-  my $cmd  = shift;
-  my $cb   = shift;
-
-  my $cmd_info = $self->{_commands}{ $cmd->{kwds}[0] };
-
-  if ( defined $self->{_forced_slot} ) {
-    my $slot = $self->{_forced_slot};
-
-    if ( defined $cmd_info && $cmd_info->{unforcing_slot} ) {
-      undef $self->{_forced_slot};
-    }
-
-    $cb->($slot);
-
-    return;
-  }
-
-  $self->_get_key( $cmd,
-    sub {
-      my $key = shift;
-
-      unless ( defined $key ) {
-        $cb->( undef, $self->{allow_slaves} );
-        return;
-      }
-
-      my $slot = _get_slot($key);
-
-      if ( ( defined $cmd_info && $cmd_info->{forcing_slot} )
-        || defined $self->{_deferred_multi} )
-      {
-        $self->{_forced_slot} = $slot;
-      }
-
-      $cb->( $slot, $self->{allow_slaves} && $cmd_info->{readonly} );
-    }
-  );
-
-  return;
-}
-
-sub _get_key {
-  my $self = shift;
-  my $cmd  = shift;
-  my $cb   = shift;
-
-  my $cmd_info = $self->{_commands}{ $cmd->{kwds}[0] };
-
-  unless ( defined $cmd_info ) {
-    $cb->();
-    return;
-  }
-
-  if ( $cmd_info->{movablekeys} ) {
-    my @nodes
-        = $self->{allow_slaves}
-        ? keys %{ $self->{_nodes_pool} }
-        : @{ $self->{_masters} };
-
-    $self->_execute(
-      { name => 'command_getkeys',
-        args => [ @{ $cmd->{kwds} }, @{ $cmd->{args} } ],
-        on_node_error => $cmd->{on_node_error},
-
-        on_reply => sub {
-          my $keys = shift;
-          my $err  = shift;
-
-          if ( defined $err ) {
-            $cmd->{on_reply}->( undef, $err );
-            return;
-          }
-
-          if ( @{$keys} ) {
-            $cb->( $keys->[0] );
-          }
-          else {
-            $cb->();
-          }
-        }
-      },
-      @nodes,
-    );
-
-    return;
-  }
-
-  if ( $cmd_info->{key_pos} > 0 ) {
-    my @tokens = ( @{ $cmd->{kwds} }, @{ $cmd->{args} } );
-    my $key    = $tokens[ $cmd_info->{key_pos} ];
-
-    $cb->($key);
-  }
-  else {
-    $cb->();
-  }
-
-  return;
-}
-
 sub _process_input_queue {
   my $self = shift;
 
@@ -810,15 +740,14 @@ sub _process_input_queue {
 sub _reset_internals {
   my $self = shift;
 
-  $self->{_nodes_pool}     = {};
-  $self->{_masters}        = undef;
-  $self->{_slots}          = undef;
-  $self->{_commands}       = undef;
-  $self->{_init_state}     = S_NEED_DO;
-  $self->{_refresh_timer}  = undef;
-  $self->{_ready}          = 0;
-  $self->{_deferred_multi} = undef;
-  $self->{_forced_slot}    = undef;
+  $self->{_nodes_pool}    = {};
+  $self->{_masters}       = undef;
+  $self->{_slots}         = undef;
+  $self->{_commands}      = undef;
+  $self->{_init_state}    = S_NEED_DO;
+  $self->{_refresh_timer} = undef;
+  $self->{_ready}         = 0;
+  $self->{_forced_slot}   = undef;
 
   return;
 }
@@ -1067,9 +996,9 @@ By default the client use kernel's connection timeout.
 =item read_timeout => $fractional_seconds
 
 Specifies read timeout. If the client could not receive a reply from the node
-after specified timeout, the client close connection and call the C<on_error>
-callback with the C<E_READ_TIMEDOUT> error. The timeout is specifies in seconds
-and can contain a fractional part.
+after specified timeout, the client close connection and call the
+C<on_node_error> callback with the C<E_READ_TIMEDOUT> error. The timeout is
+specifies in seconds and can contain a fractional part.
 
   read_timeout => 3.5,
 
