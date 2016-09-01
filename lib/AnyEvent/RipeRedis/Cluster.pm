@@ -73,8 +73,8 @@ my @CRC16_TAB = (
 
 my %PREDEFINED_CMDS = (
   sort        => { readonly => 0, key_pos => 1 },
-  zunionstore => { readonly => 0, key_pos => 3 },
-  zinterstore => { readonly => 0, key_pos => 3 },
+  zunionstore => { readonly => 0, key_pos => 1 },
+  zinterstore => { readonly => 0, key_pos => 1 },
   eval        => { readonly => 0, key_pos => 3 },
   evalsha     => { readonly => 0, key_pos => 3 },
   multi       => { readonly => 0, key_pos => 1, force_slot => 1 },
