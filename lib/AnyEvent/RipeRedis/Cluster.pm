@@ -19,7 +19,7 @@ our %ERROR_CODES;
 
 BEGIN {
   %ERROR_CODES = %AnyEvent::RipeRedis::Error::ERROR_CODES;
-  our @EXPORT_OK   = keys %ERROR_CODES;
+  our @EXPORT_OK   = ( keys %ERROR_CODES, qw( crc16 hash_slot ) );
   our %EXPORT_TAGS = ( err_codes => \@EXPORT_OK, );
 }
 
@@ -212,6 +212,20 @@ sub crc16 {
   }
 
   return $crc;
+}
+
+sub hash_slot {
+  my $key = shift;
+
+  my $tag = $key;
+
+  if ( $key =~ m/\{([^}]*?)\}/ ) {
+    if ( length $1 > 0 ) {
+      $tag = $1;
+    }
+  }
+
+  return crc16($tag) % MAX_SLOTS;
 }
 
 sub _init {
@@ -602,7 +616,7 @@ sub _route {
     $allow_slaves = $self->{allow_slaves};
 
     if ( defined $key ) {
-      $slot = _get_slot($key);
+      $slot = hash_slot($key);
 
       if ( $cmd_info->{force_slot}
         && !defined $self->{_forced_slot} )
@@ -785,20 +799,6 @@ sub _queued_commands {
     @{ $self->{_temp_queue} },
     @{ $self->{_input_queue} },
   );
-}
-
-sub _get_slot {
-  my $key = shift;
-
-  my $tag = $key;
-
-  if ( $key =~ m/\{([^}]*?)\}/ ) {
-    if ( length $1 > 0 ) {
-      $tag = $1;
-    }
-  }
-
-  return crc16($tag) % MAX_SLOTS;
 }
 
 sub _new_error {
@@ -1233,9 +1233,17 @@ Get or set the C<on_error> callback.
 
 =head1 SERVICE FUNCTIONS
 
+Service functions provided by AnyEvent::RipeRedis::Cluster can be imported.
+
+  use AnyEvent::RipeRedis::Cluster qw( crc16 hash_slot );
+
 =head2 crc16( $data )
 
 Compute CRC16 for the specified data as defined in Redis Cluster specification.
+
+=head2 hash_slot( $key );
+
+Returns slot number by the key.
 
 =head1 SEE ALSO
 
