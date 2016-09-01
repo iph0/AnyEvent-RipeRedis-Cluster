@@ -5,7 +5,7 @@ use strict;
 use warnings;
 use base qw( Exporter );
 
-our $VERSION = '0.05_04';
+our $VERSION = '0.05_06';
 
 use AnyEvent::RipeRedis;
 use AnyEvent::RipeRedis::Error;
@@ -435,7 +435,7 @@ sub _discover_commands {
         foreach my $cmd_raw ( @{$commands_raw} ) {
           my $kwd = lc( $cmd_raw->[0] );
 
-          next if exists $PREDEFINED_CMDS{$kwd};
+          next if exists $commands{$kwd};
 
           my $readonly = 0;
           foreach my $flag ( @{ $cmd_raw->[2] } ) {

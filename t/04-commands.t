@@ -2,7 +2,7 @@ use 5.008000;
 use strict;
 use warnings;
 
-use Test::More tests => 22;
+use Test::More tests => 21;
 BEGIN {
   require 't/test_helper.pl';
 }
@@ -70,7 +70,6 @@ t_global_on_node_error();
 t_on_node_error_for_command($cluster);
 t_transaction($cluster);
 t_multiword_command($cluster);
-t_movable_keys($cluster);
 t_execute_method($cluster);
 t_disconnect($cluster);
 
@@ -348,36 +347,6 @@ sub t_multiword_command {
   );
 
   is_deeply( $t_reply, 'test', 'multiword command; CLIENT GETNAME' );
-
-  return;
-}
-
-sub t_movable_keys {
-  my $cluster = shift;
-
-  my $t_reply = shift;
-
-  ev_loop(
-    sub {
-      my $cv = shift;
-
-      $cluster->eval_cached( 'return { KEYS[1], KEYS[2], ARGV[1], ARGV[2] }',
-          2, '{key}1', '{key}2', 'first', 'second',
-        sub {
-          $t_reply = shift;
-          my $err  = shift;
-
-          if ( defined $err ) {
-            diag( $err->message );
-          }
-
-          $cv->send;
-        }
-      );
-    }
-  );
-
-  is_deeply( $t_reply, [qw( {key}1 {key}2 first second )], 'movable keys' );
 
   return;
 }
