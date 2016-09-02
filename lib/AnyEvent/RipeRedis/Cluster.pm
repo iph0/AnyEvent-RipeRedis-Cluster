@@ -5,7 +5,7 @@ use strict;
 use warnings;
 use base qw( Exporter );
 
-our $VERSION = '0.06';
+our $VERSION = '0.07_01';
 
 use AnyEvent::RipeRedis;
 use AnyEvent::RipeRedis::Error;
@@ -119,7 +119,7 @@ sub new {
 
   my %node_params;
   foreach my $name ( qw( password utf8 connection_timeout read_timeout
-      reconnect min_reconnect_interval handle_params ) )
+      reconnect reconnect_interval handle_params ) )
   {
     next unless defined $params{$name};
     $node_params{$name} = $params{$name};
@@ -926,11 +926,11 @@ L<http://redis.io/topics/cluster-spec>
       { host => 'localhost', port => 7000 },
       { host => 'localhost', port => 7001 },
     ],
-    connection_timeout     => 5,
-    read_timeout           => 5,
-    refresh_interval       => 5,
-    lazy                   => 1,
-    min_reconnect_interval => 5,
+    connection_timeout => 5,
+    read_timeout       => 5,
+    refresh_interval   => 5,
+    lazy               => 1,
+    reconnect_interval => 5,
 
     on_node_connect => sub {
       # handling...
@@ -1019,12 +1019,12 @@ you need. Such behavior allows to control reconnection procedure.
 
 Enabled by default.
 
-=item min_reconnect_interval => $fractional_seconds
+=item reconnect_interval => $fractional_seconds
 
-If the parameter is specified, the client will try to reconnect not often, than
-after this interval. Commands executed between reconnections will be queued.
+If the parameter is specified, the client will try to reconnect only after
+this interval. Commands executed between reconnections will be queued.
 
-  min_reconnect_interval => 5,
+  reconnect_interval => 5,
 
 Not set by default.
 
