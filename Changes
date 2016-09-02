@@ -1,5 +1,8 @@
 Revision history for AnyEvent::RipeRedis::Cluster.
 
+0.08 Fri Sep 2 18:17:52 MSK 2016
+  - "min_reconnect_interval" renamed to "reconnect_interval"
+
 0.06 Fri Sep 2 08:20:10 MSK 2016
   - Improved command routing and transaction handling.
   - Added public function "hash_slot()".
