@@ -1,5 +1,11 @@
 Revision history for AnyEvent::RipeRedis::Cluster.
 
+0.06 Fri Sep 2 08:20:10 MSK 2016
+  - Improved command routing and transaction handling.
+  - Added public function "hash_slot()".
+  - Service functions now can be imported.
+  - Fixed transfer of parameters to AnyEvent::RipeRedis.
+
 0.04 Tue Aug 30 19:57:40 MSK 2016
   - Tests improved.
   - Minor changes in POD.
