@@ -5,7 +5,7 @@ use strict;
 use warnings;
 use base qw( Exporter );
 
-our $VERSION = '0.08';
+our $VERSION = '0.09_01';
 
 use AnyEvent::RipeRedis;
 use AnyEvent::RipeRedis::Error;
@@ -20,7 +20,7 @@ our %ERROR_CODES;
 BEGIN {
   %ERROR_CODES = %AnyEvent::RipeRedis::Error::ERROR_CODES;
   our @EXPORT_OK   = ( keys %ERROR_CODES, qw( crc16 hash_slot ) );
-  our %EXPORT_TAGS = ( err_codes => \@EXPORT_OK, );
+  our %EXPORT_TAGS = ( err_codes => \@EXPORT_OK );
 }
 
 use constant {
@@ -721,8 +721,6 @@ sub _execute {
         }
 
         $cmd->{on_reply}->($reply);
-
-        return;
       },
 
       defined $cmd->{on_message}
@@ -1090,7 +1088,7 @@ to C<STDERR>.
 To execute the command you must call specific method with corresponding name.
 The reply to the command is passed to the callback in first argument. If any
 error occurred during the command execution, the error object is passed to the
-callback in second argument. Error object is an instance of the class
+callback in second argument. Error object is the instance of the class
 L<AnyEvent::RipeRedis::Error>.
 
 Before the command execution, the client determines the pool of nodes, on which
@@ -1254,12 +1252,12 @@ aborted.
 
 =head2 refresh_interval( [ $fractional_seconds ] )
 
-Get or set the C<refresh_interval> of the client. The C<undef> value resets
+Gets or sets the C<refresh_interval> of the client. The C<undef> value resets
 the C<refresh_interval> to default value.
 
 =head2 on_error( [ $callback ] )
 
-Get or set the C<on_error> callback.
+Gets or sets the C<on_error> callback.
 
 =head1 SERVICE FUNCTIONS
 

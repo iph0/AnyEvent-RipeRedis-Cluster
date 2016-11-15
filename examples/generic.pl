@@ -31,12 +31,7 @@ my $cluster = AnyEvent::RipeRedis::Cluster->new(
     my $host = shift;
     my $port = shift;
 
-    print "$host:$port: " . $err->message . "\n";
-  },
-
-  on_error => sub {
-    my $err = shift;
-    print $err->message . "\n";
+    warn "$host:$port: " . $err->message . "\n";
   },
 );
 
@@ -49,7 +44,7 @@ $cluster->get( '__last__',
     my $err = shift;
 
     if ( defined $err ) {
-      print $err->message . "\n";
+      warn $err->message . "\n";
       return;
     }
 
@@ -82,7 +77,7 @@ sub set_get {
       my $err = $_[1];
 
       if ( defined $err ) {
-        print $err->message . "\n";
+        warn $err->message . "\n";
         return;
       }
 
@@ -92,7 +87,7 @@ sub set_get {
           my $err   = shift;
 
           if ( defined $err ) {
-            print $err->message . "\n";
+            warn $err->message . "\n";
             return;
           }
 
@@ -108,7 +103,7 @@ sub set_get {
       my $err   = shift;
 
       if ( defined $err ) {
-        print $err->message . "\n";
+        warn $err->message . "\n";
         return;
       }
     }
