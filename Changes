@@ -1,5 +1,11 @@
 Revision history for AnyEvent::RipeRedis::Cluster.
 
+0.10 Sun Nov 20 19:48:30 MSK 2016
+  - Fixes in POD.
+  - Fixes in tests.
+  - Fixes in example script.
+  - Cosmetic changes in code.
+
 0.08 Fri Sep 2 18:17:52 MSK 2016
   - "min_reconnect_interval" renamed to "reconnect_interval"
 
