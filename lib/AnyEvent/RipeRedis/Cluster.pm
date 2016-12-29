@@ -5,7 +5,7 @@ use strict;
 use warnings;
 use base qw( Exporter );
 
-our $VERSION = '0.10';
+our $VERSION = '0.12';
 
 use AnyEvent::RipeRedis;
 use AnyEvent::RipeRedis::Error;
@@ -1042,7 +1042,7 @@ Specifies L<AnyEvent::Handle> parameters.
     linger   => 60,
   }
 
-Enabling of the C<autocork> parameter can improve perfomance. See
+Enabling of the C<autocork> parameter can improve performance. See
 documentation on L<AnyEvent::Handle> for more information.
 
 =item on_node_connect => $cb->( $host, $port )
