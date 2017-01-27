@@ -172,4 +172,15 @@ sub ev_loop {
   return;
 }
 
+sub nodes {
+  my $cluster = shift;
+  my $key     = shift;
+  my $allow_slaves = shift;
+
+  return sort { $a->[0] cmp $b->[0] || $a->[1] <=> $b->[1] }
+      map { [ $_->host, $_->port ] } $cluster->nodes( $key, $allow_slaves );
+
+  return;
+}
+
 1;

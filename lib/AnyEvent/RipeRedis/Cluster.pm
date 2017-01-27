@@ -5,7 +5,7 @@ use strict;
 use warnings;
 use base qw( Exporter );
 
-our $VERSION = '0.12';
+our $VERSION = '0.13_02';
 
 use AnyEvent::RipeRedis;
 use AnyEvent::RipeRedis::Error;
@@ -157,6 +157,23 @@ sub disconnect {
   $self->_abort;
 
   return;
+}
+
+sub nodes {
+  my $self = shift;
+  my $key  = shift;
+  my $allow_slaves = shift;
+
+  return unless defined $self->{_nodes_pool};
+
+  my $slot;
+  if ( defined $key ) {
+    $slot = hash_slot($key);
+  }
+
+  my @nodes = $self->_nodes( $slot, $allow_slaves );
+
+  return @{ $self->{_nodes_pool} }{@nodes};
 }
 
 sub refresh_interval {
@@ -564,7 +581,7 @@ sub _prepare {
       my $err   = shift;
 
       if ( defined $err ) {
-        $self->{on_error}->( $err, $reply );
+        $self->{on_error}->($err);
         return;
       }
     };
@@ -629,30 +646,11 @@ sub _route {
     }
   }
 
-  my @nodes;
-
-  if ( defined $slot ) {
-    my ($range) = bsearch {
-      $slot > $_->[1] ? -1 : $slot < $_->[0] ? 1 : 0;
-    }
-    @{ $self->{_slots} };
-
-    @nodes
-        = $allow_slaves
-        ? @{ $range->[2] }
-        : ( $range->[2][0] );
-  }
-  else {
-    @nodes
-        = $allow_slaves
-        ? keys %{ $self->{_nodes_pool} }
-        : @{ $self->{_masters} };
-  }
-
   if ( $cmd->{name} eq 'multi' ) {
     $cmd->{args} = [];
   }
 
+  my @nodes = $self->_nodes( $slot, $allow_slaves );
   $self->_execute( $cmd, @nodes );
 
   return;
@@ -730,6 +728,27 @@ sub _execute {
   );
 
   return;
+}
+
+sub _nodes {
+  my $self = shift;
+  my $slot = shift;
+  my $allow_slaves = shift;
+
+  if ( defined $slot ) {
+    my ($range) = bsearch {
+      $slot > $_->[1] ? -1 : $slot < $_->[0] ? 1 : 0;
+    }
+    @{ $self->{_slots} };
+
+    return $allow_slaves
+        ? @{ $range->[2] }
+        : ( $range->[2][0] );
+  }
+
+  return $allow_slaves
+      ? keys %{ $self->{_nodes_pool} }
+      : @{ $self->{_masters} };
 }
 
 sub _process_input_queue {
@@ -931,18 +950,30 @@ L<http://redis.io/topics/cluster-spec>
     reconnect_interval => 5,
 
     on_node_connect => sub {
+      my $host = shift;
+      my $port = shift;
+
       # handling...
     },
 
     on_node_disconnect => sub {
+      my $host = shift;
+      my $port = shift;
+
       # handling...
     },
 
     on_node_error => sub {
+      my $err = shift;
+      my $host = shift;
+      my $port = shift;
+
       # error handling...
     },
 
     on_error => sub {
+      my $err = shift;
+
       # error handling...
     },
   );
@@ -1047,15 +1078,15 @@ documentation on L<AnyEvent::Handle> for more information.
 
 =item on_node_connect => $cb->( $host, $port )
 
-The C<on_node_connect> callback is called when the connection to specific node
-is successfully established. To callback are passed two arguments: host and
-port of the node to which the client was connected.
+The C<on_node_connect> callback is called when the connection to particular
+node is successfully established. To callback are passed two arguments: host
+and port of the node to which the client was connected.
 
 Not set by default.
 
 =item on_node_disconnect => $cb->( $host, $port )
 
-The C<on_node_disconnect> callback is called when the connection to specific
+The C<on_node_disconnect> callback is called when the connection to particular
 node is closed by any reason. To callback are passed two arguments: host and
 port of the node from which the client was disconnected.
 
@@ -1085,7 +1116,7 @@ to C<STDERR>.
 
 =head2 <command>( [ @args ] [, ( $cb->( $reply, $err ) | \%cbs ) ] )
 
-To execute the command you must call specific method with corresponding name.
+To execute the command you must call particular method with corresponding name.
 The reply to the command is passed to the callback in first argument. If any
 error occurred during the command execution, the error object is passed to the
 callback in second argument. Error object is the instance of the class
@@ -1143,7 +1174,7 @@ The full list of the Redis commands can be found here: L<http://redis.io/command
 
   $cluster->incr( 'counter' );
 
-If you want to track errors on specific nodes, you must specify C<on_node_error>
+If you want to track errors on particular nodes, you must specify C<on_node_error>
 callback in command method.
 
   $cluster->get( 'foo',
@@ -1173,7 +1204,7 @@ callback in command method.
     }
   );
 
-=head2 execute( $command, [ @args ] [, ( $cb->( $reply, $err ) | \%cbs ) ] )
+=head2 execute( $command [, @args ] [, ( $cb->( $reply, $err ) | \%cbs ) ] )
 
 An alternative method to execute commands. In some cases it can be more
 convenient.
@@ -1249,6 +1280,26 @@ The method for disconnection. All uncompleted operations will be
 aborted.
 
 =head1 OTHER METHODS
+
+=head2 nodes( [ $key ] [, $allow_slaves ] )
+
+Gets particular nodes of the cluster. Nodes must be discovered first.
+
+Getting all master nodes:
+
+  my @master_nodes = $cluster->nodes;
+
+Getting all nodes of the cluster:
+
+  my @nodes = $cluster->nodes( undef, 1 );
+
+Getting muster nodes by the key:
+
+  my @master_nodes = $cluster->nodes('foo');
+
+Getting nodes by the key including slave nodes:
+
+  my @nodes = $cluster->nodes( 'foo', 1 );
 
 =head2 refresh_interval( [ $fractional_seconds ] )
 

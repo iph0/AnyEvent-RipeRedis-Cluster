@@ -2,7 +2,7 @@ use 5.008000;
 use strict;
 use warnings;
 
-use Test::More tests => 21;
+use Test::More tests => 25;
 BEGIN {
   require 't/test_helper.pl';
 }
@@ -62,6 +62,7 @@ is_deeply( \@NODES_CONNECTED,
   'on_node_connect'
 );
 
+t_nodes($cluster);
 t_set($cluster);
 t_get($cluster);
 t_error_reply($cluster);
@@ -73,6 +74,51 @@ t_multiword_command($cluster);
 t_execute_method($cluster);
 t_disconnect($cluster);
 
+sub t_nodes {
+  my $cluster = shift;
+
+  my @master_nodes = nodes($cluster);
+
+  is_deeply( \@master_nodes,
+    [ [ '127.0.0.1', 7000 ],
+      [ '127.0.0.1', 7001 ],
+      [ '127.0.0.1', 7002 ],
+    ],
+    'nodes; master nodes'
+  );
+
+  my @nodes = nodes( $cluster, undef, 1 );
+
+  is_deeply( \@nodes,
+    [ [ '127.0.0.1', 7000 ],
+      [ '127.0.0.1', 7001 ],
+      [ '127.0.0.1', 7002 ],
+      [ '127.0.0.1', 7003 ],
+      [ '127.0.0.1', 7004 ],
+      [ '127.0.0.1', 7005 ],
+      [ '127.0.0.1', 7006 ],
+    ],
+    'nodes; all nodes'
+  );
+
+  @master_nodes = nodes( $cluster, 'foo' );
+
+  is_deeply( \@master_nodes,
+    [ [ '127.0.0.1', 7002 ] ],
+    'nodes; master nodes by key'
+  );
+
+  @nodes = nodes( $cluster, 'foo', 1 );
+
+  is_deeply( \@nodes,
+    [ [ '127.0.0.1', 7002 ],
+      [ '127.0.0.1', 7006 ],
+    ],
+    'nodes; nodes by key'
+  );
+
+  return;
+}
 
 sub t_set {
   my $cluster = shift;
