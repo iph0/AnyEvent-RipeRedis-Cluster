@@ -5,7 +5,7 @@ use strict;
 use warnings;
 use base qw( Exporter );
 
-our $VERSION = '0.14';
+our $VERSION = '0.16';
 
 use AnyEvent::RipeRedis;
 use AnyEvent::RipeRedis::Error;
@@ -1284,19 +1284,19 @@ aborted.
 
 Gets particular nodes of the cluster. Nodes must be discovered first.
 
-Getting all master nodes:
+Getting all master nodes of the cluster:
 
   my @master_nodes = $cluster->nodes;
 
-Getting all nodes of the cluster:
+Getting all nodes of the cluster, including slave nodes:
 
   my @nodes = $cluster->nodes( undef, 1 );
 
-Getting muster nodes by the key:
+Getting master nodes by the key:
 
   my @master_nodes = $cluster->nodes('foo');
 
-Getting nodes by the key including slave nodes:
+Getting nodes by the key, including slave nodes:
 
   my @nodes = $cluster->nodes( 'foo', 1 );
 
