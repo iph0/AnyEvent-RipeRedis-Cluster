@@ -1,5 +1,9 @@
 Revision history for AnyEvent::RipeRedis::Cluster.
 
+0.14 Sat Jan 28 19:11:37 MSK 2017
+  - Added method "nodes".
+  - Light refactoring and fixes in POD.
+
 0.12 Thu Dec 29 15:16:35 MSK 2016
   - Fixed typo in POD.
 

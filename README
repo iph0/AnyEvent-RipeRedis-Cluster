@@ -1,4 +1,4 @@
-AnyEvent-RipeRedis-Cluster version 0.13_03
+AnyEvent-RipeRedis-Cluster version 0.14
 =======================================
 
 INSTALLATION
@@ -30,7 +30,7 @@ Sponsored by SMS Online, <dev.opensource@sms-online.com>
 
 COPYRIGHT AND LICENSE
 
-Copyright (c) 2016, Eugene Ponizovsky, SMS Online. All rights reserved.
+Copyright (c) 2016-2017, Eugene Ponizovsky, SMS Online. All rights reserved.
 
 This module is free software; you can redistribute it and/or modify it under
 the same terms as Perl itself.
