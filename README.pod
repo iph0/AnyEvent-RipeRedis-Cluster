@@ -1,0 +1,478 @@
+=head1 NAME
+
+AnyEvent::RipeRedis::Cluster - Non-blocking Redis Cluster client
+
+=head1 SYNOPSIS
+
+  use AnyEvent;
+  use AnyEvent::RipeRedis::Cluster;
+
+  my $cluster = AnyEvent::RipeRedis::Cluster->new(
+    startup_nodes => [
+      { host => 'localhost', port => 7000 },
+      { host => 'localhost', port => 7001 },
+    ],
+  );
+
+  my $cv = AE::cv;
+
+  $cluster->set( 'foo', 'bar',
+    sub {
+      my $err = $_[1];
+
+      if ( defined $err ) {
+        warn $err->message . "\n";
+        $cv->send;
+
+        return;
+      }
+
+      $cluster->get( 'foo',
+        sub {
+          my $reply = shift;
+          my $err   = shift;
+
+          if ( defined $err ) {
+            warn $err->message . "\n";
+            $cv->send;
+
+            return;
+          }
+
+          print "$reply\n";
+          $cv->send;
+        }
+      );
+    }
+  );
+
+  $cv->recv;
+
+=head1 DESCRIPTION
+
+AnyEvent::RipeRedis::Cluster is non-blocking Redis Cluster client built on top
+of the L<AnyEvent::RipeRedis>.
+
+Requires Redis 3.0 or higher, and any supported event loop.
+
+For more information about Redis Cluster see here:
+
+=over
+
+=item *
+
+L<http://redis.io/topics/cluster-tutorial>
+
+=item *
+
+L<http://redis.io/topics/cluster-spec>
+
+=back
+
+=head1 CONSTRUCTOR
+
+=head2 new( %params )
+
+  my $cluster = AnyEvent::RipeRedis::Cluster->new(
+    startup_nodes => [
+      { host => 'localhost', port => 7000 },
+      { host => 'localhost', port => 7001 },
+    ],
+    connection_timeout => 5,
+    read_timeout       => 5,
+    refresh_interval   => 5,
+    lazy               => 1,
+    reconnect_interval => 5,
+
+    on_node_connect => sub {
+      my $host = shift;
+      my $port = shift;
+
+      # handling...
+    },
+
+    on_node_disconnect => sub {
+      my $host = shift;
+      my $port = shift;
+
+      # handling...
+    },
+
+    on_node_error => sub {
+      my $err = shift;
+      my $host = shift;
+      my $port = shift;
+
+      # error handling...
+    },
+
+    on_error => sub {
+      my $err = shift;
+
+      # error handling...
+    },
+  );
+
+=over
+
+=item startup_nodes => \@nodes
+
+Specifies the list of startup nodes. Parameter should contain array of hashes
+that contains addresses of some nodes in the cluster. Each hash should contain
+C<host> and C<port> elements. The client will try to connect to random node
+from the list to retrieve information about all cluster nodes and slots
+mappings. If the client could not connect to first selected node, it will try
+to connect to another random node from the list.
+
+=item password => $password
+
+If the password is specified, the C<AUTH> command is sent to all nodes
+of the cluster after connection.
+
+=item allow_slaves => $boolean
+
+If enabled, the client will try to send read-only commands to slave nodes.
+
+Enabled by default.
+
+=item utf8 => $boolean
+
+If enabled, all strings will be converted to UTF-8 before sending to nodes,
+and all results will be decoded from UTF-8.
+
+Enabled by default.
+
+=item connection_timeout => $fractional_seconds
+
+Specifies connection timeout. If the client could not connect to the node
+after specified timeout, the C<on_node_error> callback is called with the
+C<E_CANT_CONN> error. The timeout specifies in seconds and can contain a
+fractional part.
+
+  connection_timeout => 10.5,
+
+By default the client use kernel's connection timeout.
+
+=item read_timeout => $fractional_seconds
+
+Specifies read timeout. If the client could not receive a reply from the node
+after specified timeout, the client close connection and call the
+C<on_node_error> callback with the C<E_READ_TIMEDOUT> error. The timeout is
+specifies in seconds and can contain a fractional part.
+
+  read_timeout => 3.5,
+
+Not set by default.
+
+=item lazy => $boolean
+
+If enabled, the connection to nodes establishes at time when you will send the
+first command to the cluster. By default the connection establishes after
+calling of the C<new> method.
+
+Disabled by default.
+
+=item reconnect => $boolean
+
+If the connection to the node was lost and the parameter C<reconnect> is
+TRUE (default), the client will try to restore the connection when you execute
+next command. The client will try to reconnect only once and, if attempt fails,
+the error object is passed to command callback. If you need several attempts of
+the reconnection, you must retry a command from the callback as many times, as
+you need. Such behavior allows to control reconnection procedure.
+
+Enabled by default.
+
+=item reconnect_interval => $fractional_seconds
+
+If the parameter is specified, the client will try to reconnect only after
+this interval. Commands executed between reconnections will be queued.
+
+  reconnect_interval => 5,
+
+Not set by default.
+
+=item refresh_interval => $fractional_seconds
+
+Cluster state refresh interval. If set to zero, cluster state will be updated
+only on MOVED redirect.
+
+By default is 15 seconds.
+
+=item handle_params => \%params
+
+Specifies L<AnyEvent::Handle> parameters.
+
+  handle_params => {
+    autocork => 1,
+    linger   => 60,
+  }
+
+Enabling of the C<autocork> parameter can improve performance. See
+documentation on L<AnyEvent::Handle> for more information.
+
+=item on_node_connect => $cb->( $host, $port )
+
+The C<on_node_connect> callback is called when the connection to particular
+node is successfully established. To callback are passed two arguments: host
+and port of the node to which the client was connected.
+
+Not set by default.
+
+=item on_node_disconnect => $cb->( $host, $port )
+
+The C<on_node_disconnect> callback is called when the connection to particular
+node is closed by any reason. To callback are passed two arguments: host and
+port of the node from which the client was disconnected.
+
+Not set by default.
+
+=item on_node_error => $cb->( $err, $host, $port )
+
+The C<on_node_error> callback is called when occurred an error, which was
+affected on entire node (e. g. connection error or authentication error). Also
+the C<on_node_error> callback can be called on command errors if the command
+callback is not specified. To callback are passed three arguments: error object,
+and host and port of the node on which an error occurred.
+
+Not set by default.
+
+=item on_error => $cb->( $err )
+
+The C<on_error> callback is called when occurred an error, which was affected
+on entire client (e. g. nodes discovery error). Also the C<on_error> callback is
+called on command errors if the command callback is not specified. If the
+C<on_error> callback is not specified, the client just print an error messages
+to C<STDERR>.
+
+=back
+
+=head1 COMMAND EXECUTION
+
+=head2 <command>( [ @args ] [, ( $cb->( $reply, $err ) | \%cbs ) ] )
+
+To execute the command you must call particular method with corresponding name.
+The reply to the command is passed to the callback in first argument. If any
+error occurred during the command execution, the error object is passed to the
+callback in second argument. Error object is the instance of the class
+L<AnyEvent::RipeRedis::Error>.
+
+Before the command execution, the client determines the pool of nodes, on which
+the command can be executed. The pool can contain the one or more nodes
+depending on the cluster and client configuration and command type. The client
+will try to execute the command on random node from the pool and, if the
+command failed on selected node, the client will try to execute it on another
+random node.
+
+The command callback is optional. If it is not specified and any error
+occurred, the C<on_error> callback of the client is called.
+
+The full list of the Redis commands can be found here: L<http://redis.io/commands>.
+
+  $cluster->get( 'foo',
+    sub {
+      my $reply = shift;
+      my $err   = shift;
+
+      if ( defined $err ) {
+        my $err_msg  = $err->message;
+        my $err_code = $err->code;
+
+        # error handling...
+
+        return;
+      }
+
+      print "$reply\n";
+    }
+  );
+
+  $cluster->lrange( 'list', 0, -1,
+    sub {
+      my $reply = shift;
+      my $err   = shift;
+
+      if ( defined $err ) {
+        my $err_msg  = $err->message;
+        my $err_code = $err->code;
+
+        # error handling...
+
+        return;
+      }
+
+      foreach my $value ( @{$reply}  ) {
+        print "$value\n";
+      }
+    }
+  );
+
+  $cluster->incr( 'counter' );
+
+If you want to track errors on particular nodes, you must specify C<on_node_error>
+callback in command method.
+
+  $cluster->get( 'foo',
+    { on_reply => sub {
+        my $reply = shift;
+        my $err   = shift;
+
+        if ( defined $err ) {
+          my $err_msg  = $err->message;
+          my $err_code = $err->code;
+
+          # error handling...
+
+          return;
+        }
+
+        print "$reply\n";
+      },
+
+      on_node_error => sub {
+        my $err  = shift;
+        my $host = shift;
+        my $port = shift;
+
+        # error handling...
+      }
+    }
+  );
+
+=head2 execute( $command [, @args ] [, ( $cb->( $reply, $err ) | \%cbs ) ] )
+
+An alternative method to execute commands. In some cases it can be more
+convenient.
+
+  $cluster->execute( 'get', 'foo',
+    sub {
+      my $reply = shift;
+      my $err   = shift;
+
+      if ( defined $err ) {
+        my $err_msg  = $err->message;
+        my $err_code = $err->code;
+
+        # error handling...
+
+        return;
+      }
+
+      print "$reply\n";
+    }
+  );
+
+=head1 TRANSACTIONS
+
+The client sends all commands of the transaction to the one master node,
+which will be selected by the hash tag in C<MULTI> command or by the first key
+in the C<WATCH> command. The hash tag of the C<MULTI> command is an extension
+of the client and it is not transferred to the Redis server.
+
+  $cluster->multi('foo');
+  $cluster->set( '{foo}bar', "some\r\nstring" );
+  $cluster->set( '{foo}car', 42 );
+  $cluster->exec(
+    sub {
+      my $reply = shift;
+      my $err   = shift;
+
+      if ( defined $err ) {
+        # error handling...
+
+        return;
+      }
+
+      # reply handling...
+    }
+  );
+
+The detailed information about the Redis transactions can be found in
+documentation on L<AnyEvent::RipeRedis> and here:
+L<http://redis.io/topics/transactions>.
+
+=head1 ERROR CODES
+
+Every error object, passed to callback, contain error code, which can be used
+for programmatic handling of errors. AnyEvent::RipeRedis::Cluster provides
+constants for error codes. They can be imported and used in expressions.
+
+  use AnyEvent::RipeRedis::Cluster qw( :err_codes );
+
+Full list of error codes see in documentation on L<AnyEvent::RipeRedis>.
+
+=head1 DISCONNECTION
+
+When the connection to the cluster is no longer needed you can close it in two
+ways: call the method C<disconnect()> or just "forget" any references to an
+AnyEvent::RipeRedis::Cluster object, but in this case the client object is
+destroyed without calling any callbacks, including the C<on_disconnect>
+callback, to avoid an unexpected behavior.
+
+=head2 disconnect()
+
+The method for disconnection. All uncompleted operations will be
+aborted.
+
+=head1 OTHER METHODS
+
+=head2 nodes( [ $key ] [, $allow_slaves ] )
+
+Gets particular nodes of the cluster. Nodes must be discovered first.
+
+Getting all master nodes of the cluster:
+
+  my @master_nodes = $cluster->nodes;
+
+Getting all nodes of the cluster, including slave nodes:
+
+  my @nodes = $cluster->nodes( undef, 1 );
+
+Getting master nodes by the key:
+
+  my @master_nodes = $cluster->nodes('foo');
+
+Getting nodes by the key, including slave nodes:
+
+  my @nodes = $cluster->nodes( 'foo', 1 );
+
+=head2 refresh_interval( [ $fractional_seconds ] )
+
+Gets or sets the C<refresh_interval> of the client. The C<undef> value resets
+the C<refresh_interval> to default value.
+
+=head2 on_error( [ $callback ] )
+
+Gets or sets the C<on_error> callback.
+
+=head1 SERVICE FUNCTIONS
+
+Service functions provided by AnyEvent::RipeRedis::Cluster can be imported.
+
+  use AnyEvent::RipeRedis::Cluster qw( crc16 hash_slot );
+
+=head2 crc16( $data )
+
+Compute CRC16 for the specified data as defined in Redis Cluster specification.
+
+=head2 hash_slot( $key );
+
+Returns slot number by the key.
+
+=head1 SEE ALSO
+
+L<AnyEvent::RipeRedis>
+
+=head1 AUTHOR
+
+Eugene Ponizovsky, E<lt>ponizovsky@gmail.comE<gt>
+
+Sponsored by SMS Online, E<lt>dev.opensource@sms-online.comE<gt>
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (c) 2016-2017, Eugene Ponizovsky, SMS Online. All rights reserved.
+
+This module is free software; you can redistribute it and/or modify it under
+the same terms as Perl itself.
+
