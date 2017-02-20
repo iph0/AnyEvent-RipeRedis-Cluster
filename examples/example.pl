@@ -7,10 +7,12 @@ use AnyEvent::RipeRedis::Cluster;
 
 my $cluster = AnyEvent::RipeRedis::Cluster->new(
   startup_nodes => [
-    #{ host => 'localhost', port => 7000 },
+    { host => 'localhost', port => 7000 },
     { host => 'localhost', port => 7001 },
+    { host => 'localhost', port => 7002 },
   ],
   refresh_interval => 5,
+  lazy => 1,
 
   on_node_connect => sub {
     my $host = shift;
@@ -45,6 +47,8 @@ $cluster->get( '__last__',
 
     if ( defined $err ) {
       warn $err->message . "\n";
+      $cv->send;
+
       return;
     }
 

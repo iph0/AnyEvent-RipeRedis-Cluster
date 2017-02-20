@@ -131,7 +131,7 @@ sub new {
   $self->{_temp_queue}  = [];
 
   unless ( $self->{lazy} ) {
-    $self->_init;
+    $self->_discover_cluster;
   }
 
   return $self;
@@ -171,9 +171,9 @@ sub nodes {
     $slot = hash_slot($key);
   }
 
-  my @nodes = $self->_nodes( $slot, $allow_slaves );
+  my $nodes = $self->_nodes( $slot, $allow_slaves );
 
-  return @{ $self->{_nodes_pool} }{@nodes};
+  return @{ $self->{_nodes_pool} }{ @{$nodes} };
 }
 
 sub refresh_interval {
@@ -246,26 +246,44 @@ sub hash_slot {
   return crc16($tag) % MAX_SLOTS;
 }
 
-sub _init {
+sub _discover_cluster {
   my $self  = shift;
 
-  $self->{_init_state} = S_IN_PROGRESS;
+  $self->{_discover_state} = S_IN_PROGRESS;
   undef $self->{_refresh_timer};
+
+  unless ( defined $self->{_nodes_pool} ) {
+    my %nodes_pool;
+
+    foreach my $node_params ( @{ $self->{startup_nodes} } ) {
+      my $hostport = "$node_params->{host}:$node_params->{port}";
+
+      unless ( defined $nodes_pool{$hostport} ) {
+        $nodes_pool{$hostport} = $self->_new_node(
+            $node_params->{host}, $node_params->{port}, 1 );
+      }
+    }
+
+    $self->{_nodes_pool} = \%nodes_pool;
+    $self->{_nodes}      = [ keys %nodes_pool ];
+  }
 
   weaken($self);
 
-  $self->_discover_nodes(
+  $self->_cluster_info(
     sub {
       my $err = $_[1];
 
       if ( defined $err ) {
-        $self->{_init_state} = S_NEED_DO;
+        $self->{_discover_state} = S_NEED_DO;
+
+        $self->{_ready} = 0;
         $self->_abort($err);
 
         return;
       }
 
-      $self->{_init_state} = S_DONE;
+      $self->{_discover_state} = S_DONE;
 
       $self->{_ready} = 1;
       $self->_process_input_queue;
@@ -274,8 +292,7 @@ sub _init {
         $self->{_refresh_timer} = AE::timer(
           $self->{refresh_interval}, 0,
           sub {
-            $self->{_init_state} = S_NEED_DO;
-            $self->{_ready}      = 0;
+            $self->{_discover_state} = S_NEED_DO;
           }
         );
       }
@@ -285,28 +302,44 @@ sub _init {
   return;
 }
 
-sub _discover_nodes {
+sub _cluster_info {
   my $self = shift;
   my $cb   = shift;
 
-  my $nodes_pool = $self->{_nodes_pool};
+  weaken($self);
 
-  my @nodes;
-  if ( %{$nodes_pool} ) {
-    @nodes = keys %{$nodes_pool};
-  }
-  else {
-    foreach my $node_params ( @{ $self->{startup_nodes} } ) {
-      my $hostport = "$node_params->{host}:$node_params->{port}";
+  $self->_execute(
+    { name => 'cluster_info',
+      args => [],
 
-      unless ( defined $nodes_pool->{$hostport} ) {
-        $nodes_pool->{$hostport} = $self->_new_node(
-            $node_params->{host}, $node_params->{port}, 1 );
+      on_reply => sub {
+        my $info = shift;
+        my $err  = shift;
+
+        if ( defined $err ) {
+          $cb->( undef, $err );
+          return;
+        }
+
+        if ( $info->{cluster_state} eq 'fail' ) {
+          $err = _new_error( 'The cluster is down', E_CLUSTER_DOWN );
+          $cb->( undef, $err );
+
+          return;
+        }
+
+        $self->_cluster_slots($cb);
       }
+    },
+    $self->{_nodes}
+  );
 
-      push( @nodes, $hostport );
-    }
-  }
+  return;
+};
+
+sub _cluster_slots {
+  my $self = shift;
+  my $cb   = shift;
 
   weaken($self);
 
@@ -326,7 +359,7 @@ sub _discover_nodes {
         $self->_prepare_nodes_pool( $slots,
           sub {
             unless ( defined $self->{_commands} ) {
-              $self->_discover_commands($cb);
+              $self->_load_commands($cb);
               return;
             }
 
@@ -335,7 +368,7 @@ sub _discover_nodes {
         );
       }
     },
-    @nodes,
+    $self->{_nodes}
   );
 
   return;
@@ -351,7 +384,7 @@ sub _prepare_nodes_pool {
   my @masters;
   my @slaves;
 
-  my $old_nodes_pool = $self->{_nodes_pool};
+  my $nodes_pool_old = $self->{_nodes_pool};
 
   foreach my $range ( @{$slots_raw} ) {
     my $range_start = shift @{$range};
@@ -364,8 +397,8 @@ sub _prepare_nodes_pool {
       my $hostport = "$node_info->[0]:$node_info->[1]";
 
       unless ( defined $nodes_pool{$hostport} ) {
-        if ( defined $old_nodes_pool->{$hostport} ) {
-          $nodes_pool{$hostport} = $old_nodes_pool->{$hostport};
+        if ( defined $nodes_pool_old->{$hostport} ) {
+          $nodes_pool{$hostport} = delete $nodes_pool_old->{$hostport};
         }
         else {
           $nodes_pool{$hostport} = $self->_new_node( @{$node_info}[ 0, 1 ] );
@@ -389,7 +422,12 @@ sub _prepare_nodes_pool {
 
   @slots = sort { $a->[0] <=> $b->[0] } @slots;
 
+  foreach my $node ( values %{$nodes_pool_old} ) {
+    $node->disconnect;
+  }
+
   $self->{_nodes_pool} = \%nodes_pool;
+  $self->{_nodes}      = [ keys %nodes_pool ];
   $self->{_masters}    = \@masters;
   $self->{_slots}      = \@slots;
 
@@ -421,18 +459,17 @@ sub _prepare_slaves {
   };
 
   foreach my $hostport ( @{$slaves} ) {
-    $self->_execute( $cmd, $hostport );
+    $self->_execute( $cmd, [ $hostport ] );
   }
 
   return;
 }
 
-sub _discover_commands {
+sub _load_commands {
   my $self = shift;
   my $cb   = shift;
 
   weaken($self);
-  my @nodes = keys %{ $self->{_nodes_pool} };
 
   $self->_execute(
     { name => 'command',
@@ -473,7 +510,7 @@ sub _discover_commands {
         $cb->();
       }
     },
-    @nodes,
+    $self->{_nodes}
   );
 
   return;
@@ -599,13 +636,12 @@ sub _route {
     croak 'Hash tag for "multi" command not specified';
   }
 
+  if ( $self->{_discover_state} == S_NEED_DO ) {
+    $self->_discover_cluster;
+  }
+
   unless ( $self->{_ready} ) {
-    if ( $self->{_init_state} == S_NEED_DO ) {
-      $self->_init;
-    }
-
     push( @{ $self->{_input_queue} }, $cmd );
-
     return;
   }
 
@@ -649,26 +685,27 @@ sub _route {
     $cmd->{args} = [];
   }
 
-  my @nodes = $self->_nodes( $slot, $allow_slaves );
-  $self->_execute( $cmd, @nodes );
+  my $nodes = $self->_nodes( $slot, $allow_slaves );
+  $self->_execute( $cmd, $nodes );
 
   return;
 }
 
 sub _execute {
-  my $self  = shift;
-  my $cmd   = shift;
-  my @nodes = @_;
+  my $self       = shift;
+  my $cmd        = shift;
+  my $nodes      = shift;
+  my $node_index = shift;
+  my $fails_cnt  = shift || 0;
 
-  my $hostport;
-  if ( scalar @nodes > 1 ) {
-    my $rand_index = int( rand( scalar @nodes ) );
-    $hostport = splice( @nodes, $rand_index, 1 );
+  unless ( defined $node_index ) {
+    $node_index = int( rand( scalar @{$nodes} ) );
   }
-  else {
-    $hostport = shift @nodes;
+  elsif ( $node_index == scalar @{$nodes} ) {
+    $node_index = 0;
   }
-  my $node = $self->{_nodes_pool}{$hostport};
+  my $hostport = $nodes->[$node_index];
+  my $node     = $self->{_nodes_pool}{$hostport};
 
   weaken($self);
 
@@ -685,8 +722,7 @@ sub _execute {
             && !$cmd->{is_forced_slot} )
           {
             if ( $err_code == E_MOVED ) {
-              $self->{_init_state} = S_NEED_DO;
-              $self->{_ready}      = 0;
+              $self->_discover_cluster;
             }
 
             my ($fwd_hostport) = ( split( m/\s+/, $err->message ) )[2];
@@ -696,7 +732,7 @@ sub _execute {
               $nodes_pool->{$fwd_hostport} = $self->_new_node( $host, $port );
             }
 
-            $self->_execute( $cmd, $fwd_hostport );
+            $self->_execute( $cmd, [ $fwd_hostport ] );
 
             return;
           }
@@ -707,8 +743,10 @@ sub _execute {
             $on_node_error->( $err, $node->host, $node->port );
           }
 
-          if ( $err_code != E_CONN_CLOSED_BY_CLIENT && @nodes ) {
-            $self->_execute( $cmd, @nodes );
+          if ( $err_code != E_CONN_CLOSED_BY_CLIENT
+            && ++$fails_cnt < scalar @{$nodes} )
+          {
+            $self->_execute( $cmd, $nodes, ++$node_index, $fails_cnt );
             return;
           }
 
@@ -741,13 +779,13 @@ sub _nodes {
     @{ $self->{_slots} };
 
     return $allow_slaves
-        ? @{ $range->[2] }
-        : ( $range->[2][0] );
+        ? $range->[2]
+        : [ $range->[2][0] ];
   }
 
   return $allow_slaves
-      ? keys %{ $self->{_nodes_pool} }
-      : @{ $self->{_masters} };
+      ? $self->{_nodes}
+      : $self->{_masters};
 }
 
 sub _process_input_queue {
@@ -766,14 +804,16 @@ sub _process_input_queue {
 sub _reset_internals {
   my $self = shift;
 
-  $self->{_nodes_pool}    = {};
-  $self->{_masters}       = undef;
-  $self->{_slots}         = undef;
-  $self->{_commands}      = undef;
-  $self->{_init_state}    = S_NEED_DO;
-  $self->{_refresh_timer} = undef;
-  $self->{_ready}         = 0;
-  $self->{_forced_slot}   = undef;
+  $self->{_nodes_pool}     = undef;
+  $self->{_startup_nodes}  = undef;
+  $self->{_nodes}          = undef;
+  $self->{_masters}        = undef;
+  $self->{_slots}          = undef;
+  $self->{_commands}       = undef;
+  $self->{_discover_state} = S_NEED_DO;
+  $self->{_refresh_timer}  = undef;
+  $self->{_ready}          = 0;
+  $self->{_forced_slot}    = undef;
 
   return;
 }

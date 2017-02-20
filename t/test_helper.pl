@@ -9,6 +9,10 @@ use Clone qw( clone );
 
 BEGIN {
   my %command_replies = (
+    cluster_info => {
+      cluster_state => 'ok',
+    },
+
     cluster_slots => [
       [ '0',
         '5961',
@@ -136,7 +140,7 @@ BEGIN {
     },
   );
 
-  *CORE::GLOBAL::rand = sub { return 1 };
+  *CORE::GLOBAL::rand = sub { return 0 };
 }
 
 use AnyEvent::RipeRedis::Cluster qw( :err_codes );
@@ -147,7 +151,6 @@ sub new_cluster {
   return AnyEvent::RipeRedis::Cluster->new(
     startup_nodes => [
       { host => 'localhost', port => 7000 },
-      { host => 'localhost', port => 7001 },
     ],
     %params,
   );

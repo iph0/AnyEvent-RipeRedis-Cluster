@@ -57,7 +57,7 @@ is_deeply( \@NODES_CONNECTED,
     [ '127.0.0.1', 7004 ],
     [ '127.0.0.1', 7005 ],
     [ '127.0.0.1', 7006 ],
-    [ 'localhost', 7001 ],
+    [ 'localhost', 7000 ],
   ],
   'on_node_connect'
 );
@@ -447,6 +447,7 @@ sub t_disconnect {
       [ '127.0.0.1', 7004 ],
       [ '127.0.0.1', 7005 ],
       [ '127.0.0.1', 7006 ],
+      [ 'localhost', 7000 ],
     ],
     'on_node_disconnect'
   );
