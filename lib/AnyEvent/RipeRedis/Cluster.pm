@@ -15,7 +15,7 @@ use List::MoreUtils qw( bsearch );
 use Scalar::Util qw( looks_like_number weaken );
 use Carp qw( croak );
 
-our %ERROR_CODES;
+my %ERROR_CODES;
 
 BEGIN {
   %ERROR_CODES = %AnyEvent::RipeRedis::Error::ERROR_CODES;
