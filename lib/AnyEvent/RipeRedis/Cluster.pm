@@ -5,7 +5,7 @@ use strict;
 use warnings;
 use base qw( Exporter );
 
-our $VERSION = '0.17_01';
+our $VERSION = '0.17_02';
 
 use AnyEvent::RipeRedis;
 use AnyEvent::RipeRedis::Error;
@@ -335,7 +335,7 @@ sub _discover_cluster {
                 return;
               }
 
-              $self->_prepare_nodes_pool( $slots,
+              $self->_prepare_nodes( $slots,
                 sub {
                   unless ( defined $self->{_commands} ) {
                     $self->_load_commands($cb);
@@ -357,7 +357,7 @@ sub _discover_cluster {
   return;
 }
 
-sub _prepare_nodes_pool {
+sub _prepare_nodes {
   my $self      = shift;
   my $slots_raw = shift;
   my $cb        = shift;
