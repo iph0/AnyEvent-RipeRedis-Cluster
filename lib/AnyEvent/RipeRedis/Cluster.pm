@@ -625,6 +625,7 @@ sub _route {
     }
 
     push( @{ $self->{_input_queue} }, $cmd );
+
     return;
   }
 
@@ -972,6 +973,7 @@ L<http://redis.io/topics/cluster-spec>
     startup_nodes => [
       { host => 'localhost', port => 7000 },
       { host => 'localhost', port => 7001 },
+      { host => 'localhost', port => 7002 },
     ],
     connection_timeout => 5,
     read_timeout       => 5,
