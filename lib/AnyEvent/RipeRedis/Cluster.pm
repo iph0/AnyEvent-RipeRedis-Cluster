@@ -131,7 +131,7 @@ sub new {
   $self->{_temp_queue}  = [];
 
   unless ( $self->{lazy} ) {
-    $self->_discover_cluster;
+    $self->_init;
   }
 
   return $self;
@@ -246,10 +246,10 @@ sub hash_slot {
   return crc16($tag) % MAX_SLOTS;
 }
 
-sub _discover_cluster {
-  my $self  = shift;
+sub _init {
+  my $self = shift;
 
-  $self->{_discover_state} = S_IN_PROGRESS;
+  $self->{_init_state} = S_IN_PROGRESS;
   undef $self->{_refresh_timer};
 
   unless ( defined $self->{_nodes_pool} ) {
@@ -270,12 +270,12 @@ sub _discover_cluster {
 
   weaken($self);
 
-  $self->_cluster_info(
+  $self->_discover_cluster(
     sub {
       my $err = $_[1];
 
       if ( defined $err ) {
-        $self->{_discover_state} = S_NEED_DO;
+        $self->{_init_state} = S_NEED_DO;
 
         $self->{_ready} = 0;
         $self->_abort($err);
@@ -283,7 +283,7 @@ sub _discover_cluster {
         return;
       }
 
-      $self->{_discover_state} = S_DONE;
+      $self->{_init_state} = S_DONE;
 
       $self->{_ready} = 1;
       $self->_process_input_queue;
@@ -292,7 +292,8 @@ sub _discover_cluster {
         $self->{_refresh_timer} = AE::timer(
           $self->{refresh_interval}, 0,
           sub {
-            $self->{_discover_state} = S_NEED_DO;
+            $self->{_init_state} = S_NEED_DO;
+            $self->{_ready}      = 0;
           }
         );
       }
@@ -302,69 +303,51 @@ sub _discover_cluster {
   return;
 }
 
-sub _cluster_info {
+sub _discover_cluster {
   my $self = shift;
   my $cb   = shift;
 
   weaken($self);
 
   $self->_execute(
-    { name => 'cluster_info',
-      args => [],
+    { name          => 'cluster_info',
+      args          => [],
+      check_cluster => 1,
 
       on_reply => sub {
-        my $info = shift;
-        my $err  = shift;
+        my $err = $_[1];
 
         if ( defined $err ) {
           $cb->( undef, $err );
           return;
         }
 
-        if ( $info->{cluster_state} eq 'fail' ) {
-          $err = _new_error( 'The cluster is down', E_CLUSTER_DOWN );
-          $cb->( undef, $err );
+        $self->_execute(
+          { name => 'cluster_slots',
+            args => [],
 
-          return;
-        }
+            on_reply => sub {
+              my $slots = shift;
+              my $err   = shift;
 
-        $self->_cluster_slots($cb);
-      }
-    },
-    $self->{_nodes}
-  );
+              if ( defined $err ) {
+                $cb->( undef, $err );
+                return;
+              }
 
-  return;
-};
+              $self->_prepare_nodes_pool( $slots,
+                sub {
+                  unless ( defined $self->{_commands} ) {
+                    $self->_load_commands($cb);
+                    return;
+                  }
 
-sub _cluster_slots {
-  my $self = shift;
-  my $cb   = shift;
-
-  weaken($self);
-
-  $self->_execute(
-    { name => 'cluster_slots',
-      args => [],
-
-      on_reply => sub {
-        my $slots = shift;
-        my $err   = shift;
-
-        if ( defined $err ) {
-          $cb->( undef, $err );
-          return;
-        }
-
-        $self->_prepare_nodes_pool( $slots,
-          sub {
-            unless ( defined $self->{_commands} ) {
-              $self->_load_commands($cb);
-              return;
+                  $cb->();
+                }
+              );
             }
-
-            $cb->();
-          }
+          },
+          $self->{_nodes}
         );
       }
     },
@@ -636,11 +619,11 @@ sub _route {
     croak 'Hash tag for "multi" command not specified';
   }
 
-  if ( $self->{_discover_state} == S_NEED_DO ) {
-    $self->_discover_cluster;
-  }
-
   unless ( $self->{_ready} ) {
+    if ( $self->{_init_state} == S_NEED_DO ) {
+      $self->_init;
+    }
+
     push( @{ $self->{_input_queue} }, $cmd );
     return;
   }
@@ -714,6 +697,13 @@ sub _execute {
         my $reply = shift;
         my $err   = shift;
 
+        if ( $cmd->{check_cluster} ) {
+          if ( !defined $err && $reply->{cluster_state} ne 'ok' ) {
+            $err = _new_error( 'CLUSTERDOWN The cluster is down',
+                E_CLUSTER_DOWN );
+          }
+        }
+
         if ( defined $err ) {
           my $err_code   = $err->code;
           my $nodes_pool = $self->{_nodes_pool};
@@ -722,7 +712,8 @@ sub _execute {
             && !$cmd->{is_forced_slot} )
           {
             if ( $err_code == E_MOVED ) {
-              $self->_discover_cluster;
+              $self->{_init_state} = S_NEED_DO;
+              $self->{_ready}      = 0;
             }
 
             my ($fwd_hostport) = ( split( m/\s+/, $err->message ) )[2];
@@ -804,16 +795,16 @@ sub _process_input_queue {
 sub _reset_internals {
   my $self = shift;
 
-  $self->{_nodes_pool}     = undef;
-  $self->{_startup_nodes}  = undef;
-  $self->{_nodes}          = undef;
-  $self->{_masters}        = undef;
-  $self->{_slots}          = undef;
-  $self->{_commands}       = undef;
-  $self->{_discover_state} = S_NEED_DO;
-  $self->{_refresh_timer}  = undef;
-  $self->{_ready}          = 0;
-  $self->{_forced_slot}    = undef;
+  $self->{_nodes_pool}    = undef;
+  $self->{_startup_nodes} = undef;
+  $self->{_nodes}         = undef;
+  $self->{_masters}       = undef;
+  $self->{_slots}         = undef;
+  $self->{_commands}      = undef;
+  $self->{_init_state}    = S_NEED_DO;
+  $self->{_refresh_timer} = undef;
+  $self->{_ready}         = 0;
+  $self->{_forced_slot}   = undef;
 
   return;
 }
