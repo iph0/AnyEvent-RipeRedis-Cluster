@@ -78,6 +78,7 @@ L<http://redis.io/topics/cluster-spec>
     startup_nodes => [
       { host => 'localhost', port => 7000 },
       { host => 'localhost', port => 7001 },
+      { host => 'localhost', port => 7002 },
     ],
     connection_timeout => 5,
     read_timeout       => 5,
@@ -365,15 +366,16 @@ convenient.
 
 =head1 TRANSACTIONS
 
-The client sends all commands of the transaction to the one master node,
-which will be selected by the hash tag in C<MULTI> command or by the first key
-in the C<WATCH> command. The hash tag of the C<MULTI> command is an extension
-of the client and it is not transferred to the Redis server.
+To perform the transaction you must get the master node by the key using
+C<nodes> method and then execute all commands on this node. Nodes must be
+discovered first.
 
-  $cluster->multi('foo');
-  $cluster->set( '{foo}bar', "some\r\nstring" );
-  $cluster->set( '{foo}car', 42 );
-  $cluster->exec(
+  $node = $cluster->nodes('foo');
+
+  $node->multi;
+  $node->set( '{foo}bar', "some\r\nstring" );
+  $node->set( '{foo}car', 42 );
+  $node->exec(
     sub {
       my $reply = shift;
       my $err   = shift;
@@ -419,7 +421,8 @@ aborted.
 
 =head2 nodes( [ $key ] [, $allow_slaves ] )
 
-Gets particular nodes of the cluster. Nodes must be discovered first.
+Gets particular nodes of the cluster. Nodes must be discovered first. In scalar
+context method returns the first node from the list.
 
 Getting all master nodes of the cluster:
 
@@ -429,9 +432,9 @@ Getting all nodes of the cluster, including slave nodes:
 
   my @nodes = $cluster->nodes( undef, 1 );
 
-Getting master nodes by the key:
+Getting master node by the key:
 
-  my @master_nodes = $cluster->nodes('foo');
+  my $master_node = $cluster->nodes('foo');
 
 Getting nodes by the key, including slave nodes:
 

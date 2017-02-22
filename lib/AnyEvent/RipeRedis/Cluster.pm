@@ -887,6 +887,7 @@ AnyEvent::RipeRedis::Cluster - Non-blocking Redis Cluster client
     startup_nodes => [
       { host => 'localhost', port => 7000 },
       { host => 'localhost', port => 7001 },
+      { host => 'localhost', port => 7002 },
     ],
   );
 
