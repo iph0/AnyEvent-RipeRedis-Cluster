@@ -2,7 +2,7 @@ use 5.008000;
 use strict;
 use warnings;
 
-use Test::More tests => 25;
+use Test::More tests => 24;
 BEGIN {
   require 't/test_helper.pl';
 }
@@ -69,7 +69,6 @@ t_error_reply($cluster);
 t_default_on_error($cluster);
 t_global_on_node_error();
 t_on_node_error_for_command($cluster);
-t_transaction($cluster);
 t_multiword_command($cluster);
 t_execute_method($cluster);
 t_disconnect($cluster);
@@ -332,38 +331,6 @@ sub t_on_node_error_for_command {
     ],
     "$t_npref; node errors"
   );
-
-  return;
-}
-
-sub t_transaction {
-  my $cluster = shift;
-
-  my $t_reply;
-
-  ev_loop(
-    sub {
-      my $cv = shift;
-
-      $cluster->multi('foo');
-      $cluster->set( '{foo}bar', "some\r\nstring" );
-      $cluster->set( '{foo}car', 42 );
-      $cluster->exec(
-        sub {
-          $t_reply = shift;
-          my $err  = shift;
-
-          if ( defined $err ) {
-            diag( $err->message );
-          }
-
-          $cv->send;
-        }
-      );
-    }
-  );
-
-  is_deeply( $t_reply, [ 'OK', 'OK' ], 'transaction; MULTI/EXEC' );
 
   return;
 }

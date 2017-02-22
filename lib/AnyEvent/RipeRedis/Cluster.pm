@@ -75,13 +75,8 @@ my %PREDEFINED_CMDS = (
   sort        => { readonly => 0, key_pos => 1 },
   zunionstore => { readonly => 0, key_pos => 1 },
   zinterstore => { readonly => 0, key_pos => 1 },
-  eval        => { readonly => 0, key_pos => 3 },
-  evalsha     => { readonly => 0, key_pos => 3 },
-  multi       => { readonly => 0, key_pos => 1, force_slot => 1 },
-  watch       => { readonly => 0, key_pos => 1, force_slot => 1 },
-  exec        => { readonly => 0, key_pos => 0, unforce_slot => 1 },
-  discard     => { readonly => 0, key_pos => 0, unforce_slot => 1 },
-  unwatch     => { readonly => 0, key_pos => 0, unforce_slot => 1 },
+  eval        => { readonly => 0, movablekeys => 1, key_pos => 0 },
+  evalsha     => { readonly => 0, movablekeys => 1, key_pos => 0 },
 );
 
 my %SUB_CMDS = (
@@ -160,8 +155,8 @@ sub disconnect {
 }
 
 sub nodes {
-  my $self = shift;
-  my $key  = shift;
+  my $self         = shift;
+  my $key          = shift;
   my $allow_slaves = shift;
 
   return unless defined $self->{_nodes_pool};
@@ -173,7 +168,9 @@ sub nodes {
 
   my $nodes = $self->_nodes( $slot, $allow_slaves );
 
-  return @{ $self->{_nodes_pool} }{ @{$nodes} };
+  return wantarray
+      ? @{ $self->{_nodes_pool} }{ @{$nodes} }
+      : $self->{_nodes_pool}{ $nodes->[0] };
 }
 
 sub refresh_interval {
@@ -235,15 +232,15 @@ sub crc16 {
 sub hash_slot {
   my $key = shift;
 
-  my $tag = $key;
+  my $hashtag = $key;
 
   if ( $key =~ m/\{([^}]*?)\}/ ) {
     if ( length $1 > 0 ) {
-      $tag = $1;
+      $hashtag = $1;
     }
   }
 
-  return crc16($tag) % MAX_SLOTS;
+  return crc16($hashtag) % MAX_SLOTS;
 }
 
 sub _init {
@@ -613,60 +610,38 @@ sub _route {
   my $self = shift;
   my $cmd  = shift;
 
-  if ( $cmd->{name} eq 'multi'
-    && !defined $cmd->{args}[0] )
-  {
-    croak 'Hash tag for "multi" command not specified';
-  }
-
   unless ( $self->{_ready} ) {
     if ( $self->{_init_state} == S_NEED_DO ) {
       $self->_init;
     }
-
     push( @{ $self->{_input_queue} }, $cmd );
 
     return;
   }
 
+  my $key;
   my $cmd_info = $self->{_commands}{ $cmd->{kwds}[0] };
 
-  my $slot;
-  my $allow_slaves;
+  if ( defined $cmd_info ) {
+    my @tokens = ( @{ $cmd->{kwds} }, @{ $cmd->{args} } );
 
-  if ( defined $self->{_forced_slot} ) {
-    $slot = $self->{_forced_slot};
-    $cmd->{is_forced_slot} = 1;
-
-    if ( defined $cmd_info && $cmd_info->{unforce_slot} ) {
-      undef $self->{_forced_slot};
-    }
-  }
-  else {
-    my $key;
-
-    if ( defined $cmd_info ) {
-      my @tokens = ( @{ $cmd->{kwds} }, @{ $cmd->{args} } );
+    if ( $cmd_info->{key_pos} > 0 ) {
       $key = $tokens[ $cmd_info->{key_pos} ];
     }
-
-    $allow_slaves = $self->{allow_slaves};
-
-    if ( defined $key ) {
-      $slot = hash_slot($key);
-
-      if ( $cmd_info->{force_slot}
-        && !defined $self->{_forced_slot} )
-      {
-        $self->{_forced_slot} = $slot;
-      }
-
-      $allow_slaves &&= $cmd_info->{readonly};
+    # Exception for EVAL and EVALSHA commands
+    elsif ( $cmd_info->{movablekeys}
+      && $tokens[2] > 0 )
+    {
+      $key = $tokens[3];
     }
   }
 
-  if ( $cmd->{name} eq 'multi' ) {
-    $cmd->{args} = [];
+  my $slot;
+  my $allow_slaves = $self->{allow_slaves};
+
+  if ( defined $key ) {
+    $slot = hash_slot($key);
+    $allow_slaves &&= $cmd_info->{readonly};
   }
 
   my $nodes = $self->_nodes( $slot, $allow_slaves );
@@ -709,9 +684,7 @@ sub _execute {
           my $err_code   = $err->code;
           my $nodes_pool = $self->{_nodes_pool};
 
-          if ( ( $err_code == E_MOVED || $err_code == E_ASK )
-            && !$cmd->{is_forced_slot} )
-          {
+          if ( $err_code == E_MOVED || $err_code == E_ASK ) {
             if ( $err_code == E_MOVED ) {
               $self->{_init_state} = S_NEED_DO;
               $self->{_ready}      = 0;
@@ -805,7 +778,6 @@ sub _reset_internals {
   $self->{_init_state}    = S_NEED_DO;
   $self->{_refresh_timer} = undef;
   $self->{_ready}         = 0;
-  $self->{_forced_slot}   = undef;
 
   return;
 }
@@ -1261,15 +1233,16 @@ convenient.
 
 =head1 TRANSACTIONS
 
-The client sends all commands of the transaction to the one master node,
-which will be selected by the hash tag in C<MULTI> command or by the first key
-in the C<WATCH> command. The hash tag of the C<MULTI> command is an extension
-of the client and it is not transferred to the Redis server.
+To perform the transaction you must get the master node by the key using
+C<nodes> method and then execute all commands on this node. Nodes must be
+discovered first.
 
-  $cluster->multi('foo');
-  $cluster->set( '{foo}bar', "some\r\nstring" );
-  $cluster->set( '{foo}car', 42 );
-  $cluster->exec(
+  $node = $cluster->nodes('foo');
+
+  $node->multi;
+  $node->set( '{foo}bar', "some\r\nstring" );
+  $node->set( '{foo}car', 42 );
+  $node->exec(
     sub {
       my $reply = shift;
       my $err   = shift;
@@ -1315,7 +1288,8 @@ aborted.
 
 =head2 nodes( [ $key ] [, $allow_slaves ] )
 
-Gets particular nodes of the cluster. Nodes must be discovered first.
+Gets particular nodes of the cluster. Nodes must be discovered first. In scalar
+context method returns the first node from the list.
 
 Getting all master nodes of the cluster:
 
@@ -1325,9 +1299,9 @@ Getting all nodes of the cluster, including slave nodes:
 
   my @nodes = $cluster->nodes( undef, 1 );
 
-Getting master nodes by the key:
+Getting master node by the key:
 
-  my @master_nodes = $cluster->nodes('foo');
+  my $master_node = $cluster->nodes('foo');
 
 Getting nodes by the key, including slave nodes:
 

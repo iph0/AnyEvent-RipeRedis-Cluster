@@ -2,7 +2,7 @@ use 5.008000;
 use strict;
 use warnings;
 
-use Test::More tests => 8;
+use Test::More tests => 7;
 use Test::Fatal;
 BEGIN {
   require 't/test_helper.pl';
@@ -10,7 +10,6 @@ BEGIN {
 
 t_startup_nodes();
 t_refresh_interval();
-t_multi_without_hash_tag();
 
 
 sub t_startup_nodes {
@@ -80,20 +79,6 @@ sub t_refresh_interval {
     },
     qr/"refresh_interval" must be a positive number/,
     'invalid refresh interval (negative number; accessor)'
-  );
-
-  return;
-}
-
-sub t_multi_without_hash_tag {
-  my $cluster = new_cluster();
-
-  like(
-    exception {
-      $cluster->multi;
-    },
-    qr/Hash tag for "multi" command not specified/,
-    q{MULTI command without hash tag},
   );
 
   return;
