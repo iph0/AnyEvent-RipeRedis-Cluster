@@ -307,9 +307,8 @@ sub _discover_cluster {
   weaken($self);
 
   $self->_execute(
-    { name          => 'cluster_info',
-      args          => [],
-      check_cluster => 1,
+    { name => 'cluster_state',
+      args => [],
 
       on_reply => sub {
         my $err = $_[1];
@@ -666,17 +665,26 @@ sub _execute {
   my $hostport = $nodes->[$node_index];
   my $node     = $self->{_nodes_pool}{$hostport};
 
+  my $cmd_name = $cmd->{name} eq 'cluster_state'
+      ? 'cluster_info'
+      : $cmd->{name};
+
   weaken($self);
 
-  $node->execute( $cmd->{name}, @{ $cmd->{args} },
+  $node->execute( $cmd_name, @{ $cmd->{args} },
     { on_reply => sub {
         my $reply = shift;
         my $err   = shift;
 
-        if ( $cmd->{check_cluster} ) {
-          if ( !defined $err && $reply->{cluster_state} ne 'ok' ) {
-            $err = _new_error( 'CLUSTERDOWN The cluster is down',
-                E_CLUSTER_DOWN );
+        if ( $cmd->{name} eq 'cluster_state' ) {
+          unless ( defined $err ) {
+            if ( $reply->{cluster_state} eq 'ok' ) {
+              $reply = 1;
+            }
+            else {
+              $err = _new_error( 'CLUSTERDOWN The cluster is down',
+                  E_CLUSTER_DOWN );
+            }
           }
         }
 
