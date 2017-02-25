@@ -1,5 +1,12 @@
 Revision history for AnyEvent::RipeRedis::Cluster.
 
+0.18 Sat Feb 25 17:05:19 MSK 2017
+  - Changed transaction logic. Now to perform transaction is necessary to get
+    master node using "nodes" method.
+  - Improved cluster discovery logic.
+  - Fixed logic for commands without keys.
+  - Added README.pod file instead of README file.
+
 0.16 Sat Jan 28 19:24:35 MSK 2017
   - Fixes in POD.
 
