@@ -159,7 +159,7 @@ sub nodes {
   my $key          = shift;
   my $allow_slaves = shift;
 
-  return unless defined $self->{_nodes_pool};
+  return unless defined $self->{_slots};
 
   my $slot;
   if ( defined $key ) {

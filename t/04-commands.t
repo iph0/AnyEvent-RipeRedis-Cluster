@@ -2,65 +2,21 @@ use 5.008000;
 use strict;
 use warnings;
 
-use Test::More tests => 24;
+use Test::More tests => 22;
 BEGIN {
   require 't/test_helper.pl';
 }
 
-my @NODES_CONNECTED;
-my @NODES_DISCONNECTED;
-
-my $cluster;
-
-ev_loop(
-  sub {
-    my $cv = shift;
-
-    $cluster = new_cluster(
-      refresh_interval   => 5,
-      connection_timeout => 5,
-      read_timeout       => 5,
-      handle_params      => {
-        autocork => 1,
-      },
-
-      on_node_connect => sub {
-        my $host = shift;
-        my $port = shift;
-
-        push( @NODES_CONNECTED, [ $host, $port ] );
-
-        return if @NODES_CONNECTED < 7;
-
-        $cv->send;
-      },
-
-      on_node_disconnect => sub {
-        my $host = shift;
-        my $port = shift;
-
-        push( @NODES_DISCONNECTED, [ $host, $port ] );
-      },
-    );
-  }
+my $cluster = new_cluster(
+  refresh_interval   => 5,
+  connection_timeout => 5,
+  read_timeout       => 5,
+  handle_params      => {
+    autocork => 1,
+  },
 );
 
-@NODES_CONNECTED = sort {
-  $a->[0] cmp $b->[0] || $a->[1] <=> $b->[1]
-} @NODES_CONNECTED;
-
-is_deeply( \@NODES_CONNECTED,
-  [ [ '127.0.0.1', 7000 ],
-    [ '127.0.0.1', 7001 ],
-    [ '127.0.0.1', 7002 ],
-    [ '127.0.0.1', 7003 ],
-    [ '127.0.0.1', 7004 ],
-    [ '127.0.0.1', 7005 ],
-    [ '127.0.0.1', 7006 ],
-    [ 'localhost', 7000 ],
-  ],
-  'on_node_connect'
-);
+can_ok( $cluster, 'disconnect' );
 
 t_nodes($cluster);
 t_set($cluster);
@@ -71,10 +27,27 @@ t_global_on_node_error();
 t_on_node_error_for_command($cluster);
 t_multiword_command($cluster);
 t_execute_method($cluster);
-t_disconnect($cluster);
 
 sub t_nodes {
   my $cluster = shift;
+
+  ev_loop(
+    sub {
+      my $cv = shift;
+
+      $cluster->ping(
+        sub {
+          my $err = $_[1];
+
+          if ( defined $err ) {
+            diag( $err->message );
+          }
+
+          $cv->send;
+        }
+      );
+    }
+  );
 
   my @master_nodes = nodes($cluster);
 
@@ -391,33 +364,6 @@ sub t_execute_method {
   );
 
   is( $t_reply, 'OK', 'execute method' );
-
-  return;
-}
-
-sub t_disconnect {
-  my $cluster = shift;
-
-  can_ok( $cluster, 'disconnect' );
-
-  $cluster->disconnect;
-
-  @NODES_DISCONNECTED = sort {
-    $a->[0] cmp $b->[0] || $a->[1] <=> $b->[1]
-  } @NODES_DISCONNECTED;
-
-  is_deeply( \@NODES_DISCONNECTED,
-    [ [ '127.0.0.1', 7000 ],
-      [ '127.0.0.1', 7001 ],
-      [ '127.0.0.1', 7002 ],
-      [ '127.0.0.1', 7003 ],
-      [ '127.0.0.1', 7004 ],
-      [ '127.0.0.1', 7005 ],
-      [ '127.0.0.1', 7006 ],
-      [ 'localhost', 7000 ],
-    ],
-    'on_node_disconnect'
-  );
 
   return;
 }

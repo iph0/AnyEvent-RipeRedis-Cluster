@@ -46,6 +46,7 @@ BEGIN {
       [ 'hget', 3, [ qw( readonly fast ) ], 1, 1, 1 ],
     ],
 
+    ping            => 'PONG',
     readonly        => 'OK',
     set             => 'OK',
     get             => "some\r\nstring",
@@ -110,7 +111,10 @@ BEGIN {
       $mock->mock( 'disconnect',
         sub {
           my $self = shift;
-          $self->{on_disconnect}->();
+
+          if ( $self->{_connected} ) {
+            $self->{on_disconnect}->();
+          }
         }
       );
 
@@ -139,8 +143,6 @@ BEGIN {
       return $mock;
     },
   );
-
-  *CORE::GLOBAL::rand = sub { return 0 };
 }
 
 use AnyEvent::RipeRedis::Cluster qw( :err_codes );
@@ -151,6 +153,8 @@ sub new_cluster {
   return AnyEvent::RipeRedis::Cluster->new(
     startup_nodes => [
       { host => 'localhost', port => 7000 },
+      { host => 'localhost', port => 7001 },
+      { host => 'localhost', port => 7002 },
     ],
     %params,
   );

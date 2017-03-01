@@ -17,6 +17,7 @@ my $cluster = new_ok( $t_class,
   [ startup_nodes => [
       { host => 'localhost', port => 7000 },
       { host => 'localhost', port => 7001 },
+      { host => 'localhost', port => 7002 },
     ],
     lazy => 1,
   ],
