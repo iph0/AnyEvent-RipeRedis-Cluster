@@ -5,7 +5,7 @@ use strict;
 use warnings;
 use base qw( Exporter );
 
-our $VERSION = '0.18';
+our $VERSION = '0.19_01';
 
 use AnyEvent::RipeRedis;
 use AnyEvent::RipeRedis::Error;
@@ -257,7 +257,7 @@ sub _init {
 
       unless ( defined $nodes_pool{$hostport} ) {
         $nodes_pool{$hostport} = $self->_new_node(
-            $node_params->{host}, $node_params->{port}, 1 );
+            $node_params->{host}, $node_params->{port} );
       }
     }
 
@@ -360,8 +360,8 @@ sub _prepare_nodes {
 
   my %nodes_pool;
   my @slots;
-  my @masters;
-  my @slaves;
+  my @masters_nodes;
+  my @slave_nodes;
 
   my $nodes_pool_old = $self->{_nodes_pool};
 
@@ -383,12 +383,12 @@ sub _prepare_nodes {
           $nodes_pool{$hostport} = $self->_new_node( @{$node_info}[ 0, 1 ] );
 
           unless ($is_master) {
-            push( @slaves, $hostport );
+            push( @slave_nodes, $hostport );
           }
         }
 
         if ($is_master) {
-          push( @masters, $hostport );
+          push( @masters_nodes, $hostport );
           $is_master = 0;
         }
       }
@@ -405,13 +405,13 @@ sub _prepare_nodes {
     $node->disconnect;
   }
 
-  $self->{_nodes_pool} = \%nodes_pool;
-  $self->{_nodes}      = [ keys %nodes_pool ];
-  $self->{_masters}    = \@masters;
-  $self->{_slots}      = \@slots;
+  $self->{_nodes_pool}   = \%nodes_pool;
+  $self->{_nodes}        = [ keys %nodes_pool ];
+  $self->{_master_nodes} = \@masters_nodes;
+  $self->{_slots}        = \@slots;
 
-  if ( $self->{allow_slaves} && @slaves ) {
-    $self->_prepare_slaves( \@slaves, $cb );
+  if ( $self->{allow_slaves} && @slave_nodes ) {
+    $self->_prepare_slaves( \@slave_nodes, $cb );
     return;
   }
 
@@ -421,11 +421,11 @@ sub _prepare_nodes {
 }
 
 sub _prepare_slaves {
-  my $self   = shift;
-  my $slaves = shift;
-  my $cb     = shift;
+  my $self        = shift;
+  my $slave_nodes = shift;
+  my $cb          = shift;
 
-  my $reply_cnt = scalar @{$slaves};
+  my $reply_cnt = scalar @{$slave_nodes};
 
   my $cmd = {
     name => 'readonly',
@@ -437,7 +437,7 @@ sub _prepare_slaves {
     }
   };
 
-  foreach my $hostport ( @{$slaves} ) {
+  foreach my $hostport ( @{$slave_nodes} ) {
     $self->_execute( $cmd, [ $hostport ] );
   }
 
@@ -449,6 +449,7 @@ sub _load_commands {
   my $cb   = shift;
 
   weaken($self);
+  my $nodes = $self->_nodes( undef, $self->{allow_slaves} );
 
   $self->_execute(
     { name => 'command',
@@ -489,7 +490,7 @@ sub _load_commands {
         $cb->();
       }
     },
-    $self->{_nodes}
+    $nodes
   );
 
   return;
@@ -499,13 +500,12 @@ sub _new_node {
   my $self = shift;
   my $host = shift;
   my $port = shift;
-  my $lazy = shift;
 
   return AnyEvent::RipeRedis->new(
     %{ $self->{_node_params} },
     host          => $host,
     port          => $port,
-    lazy          => $lazy,
+    lazy          => 1,
     on_connect    => $self->_create_on_node_connect( $host, $port ),
     on_disconnect => $self->_create_on_node_disconnect( $host, $port ),
     on_error      => $self->_create_on_node_error( $host, $port ),
@@ -758,7 +758,7 @@ sub _nodes {
 
   return $allow_slaves
       ? $self->{_nodes}
-      : $self->{_masters};
+      : $self->{_master_nodes};
 }
 
 sub _process_input_queue {
@@ -780,7 +780,7 @@ sub _reset_internals {
   $self->{_nodes_pool}    = undef;
   $self->{_startup_nodes} = undef;
   $self->{_nodes}         = undef;
-  $self->{_masters}       = undef;
+  $self->{_master_nodes}  = undef;
   $self->{_slots}         = undef;
   $self->{_commands}      = undef;
   $self->{_init_state}    = S_NEED_DO;
