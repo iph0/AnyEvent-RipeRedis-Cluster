@@ -1,5 +1,9 @@
 Revision history for AnyEvent::RipeRedis::Cluster.
 
+0.20 Thu Mar 2 16:01:07 MSK 2017
+  - Connetion to nodes become lazy. Also client do not connects to slave nodes
+    if "allow_slaves" is off.
+
 0.18 Sat Feb 25 17:05:19 MSK 2017
   - Changed transaction logic. Now to perform transaction is necessary to get
     master node using "nodes" method.
