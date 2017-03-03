@@ -8,6 +8,7 @@ BEGIN {
 }
 
 my $cluster = new_cluster(
+  allow_slaves       => 1,
   refresh_interval   => 5,
   connection_timeout => 5,
   read_timeout       => 5,
@@ -210,6 +211,8 @@ sub t_global_on_node_error {
   my @t_node_errors;
 
   my $cluster = new_cluster(
+    allow_slaves => 1,
+
     on_node_error => sub {
       my $err  = shift;
       my $host = shift;

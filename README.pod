@@ -135,7 +135,7 @@ of the cluster after connection.
 
 If enabled, the client will try to send read-only commands to slave nodes.
 
-Enabled by default.
+Disabled by default.
 
 =item utf8 => $boolean
 

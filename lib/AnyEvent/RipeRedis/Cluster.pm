@@ -5,7 +5,7 @@ use strict;
 use warnings;
 use base qw( Exporter );
 
-our $VERSION = '0.20';
+our $VERSION = '0.22';
 
 use AnyEvent::RipeRedis;
 use AnyEvent::RipeRedis::Error;
@@ -102,9 +102,8 @@ sub new {
   }
 
   $self->{startup_nodes} = $params{startup_nodes};
-  $self->{allow_slaves}
-      = exists $params{allow_slaves} ? $params{allow_slaves} : 1;
-  $self->{lazy} = $params{lazy};
+  $self->{allow_slaves}  = $params{allow_slaves};
+  $self->{lazy}          = $params{lazy};
   $self->refresh_interval( $params{refresh_interval} );
 
   $self->{on_node_connect}    = $params{on_node_connect};
@@ -249,22 +248,6 @@ sub _init {
   $self->{_init_state} = S_IN_PROGRESS;
   undef $self->{_refresh_timer};
 
-  unless ( defined $self->{_nodes_pool} ) {
-    my %nodes_pool;
-
-    foreach my $node_params ( @{ $self->{startup_nodes} } ) {
-      my $hostport = "$node_params->{host}:$node_params->{port}";
-
-      unless ( defined $nodes_pool{$hostport} ) {
-        $nodes_pool{$hostport} = $self->_new_node(
-            $node_params->{host}, $node_params->{port} );
-      }
-    }
-
-    $self->{_nodes_pool} = \%nodes_pool;
-    $self->{_nodes}      = [ keys %nodes_pool ];
-  }
-
   weaken($self);
 
   $self->_discover_cluster(
@@ -303,6 +286,27 @@ sub _init {
 sub _discover_cluster {
   my $self = shift;
   my $cb   = shift;
+
+  my $nodes;
+
+  if ( defined $self->{_slots} ) {
+    $nodes = $self->_nodes( undef, $self->{allow_slaves} );
+  }
+  else {
+    my %nodes_pool;
+
+    foreach my $node_params ( @{ $self->{startup_nodes} } ) {
+      my $hostport = "$node_params->{host}:$node_params->{port}";
+
+      unless ( defined $nodes_pool{$hostport} ) {
+        $nodes_pool{$hostport} = $self->_new_node(
+            $node_params->{host}, $node_params->{port} );
+      }
+    }
+
+    $self->{_nodes_pool} = \%nodes_pool;
+    $nodes = [ keys %nodes_pool ];
+  }
 
   weaken($self);
 
@@ -343,11 +347,11 @@ sub _discover_cluster {
               );
             }
           },
-          $self->{_nodes}
+          $nodes
         );
       }
     },
-    $self->{_nodes}
+    $nodes
   );
 
   return;
@@ -448,8 +452,9 @@ sub _load_commands {
   my $self = shift;
   my $cb   = shift;
 
-  weaken($self);
   my $nodes = $self->_nodes( undef, $self->{allow_slaves} );
+
+  weaken($self);
 
   $self->_execute(
     { name => 'command',
@@ -1011,7 +1016,7 @@ of the cluster after connection.
 
 If enabled, the client will try to send read-only commands to slave nodes.
 
-Enabled by default.
+Disabled by default.
 
 =item utf8 => $boolean
 
