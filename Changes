@@ -3,7 +3,7 @@ Revision history for AnyEvent::RipeRedis::Cluster.
 0.22 Fri Mar 3 12:54:03 MSK 2017
   - Parameter "allow_slaves" now is off by default.
   - Bugfix: the client was connecting to slave nodes when updating the cluster
-    map even if "allow_slaves" is off.
+    map even if "allow_slaves" was off.
 
 0.20 Thu Mar 2 16:01:07 MSK 2017
   - Connection to nodes become lazy. Also client do not connects to slave nodes
