@@ -5,7 +5,7 @@ use strict;
 use warnings;
 use base qw( Exporter );
 
-our $VERSION = '0.22';
+our $VERSION = '0.24';
 
 use AnyEvent::RipeRedis;
 use AnyEvent::RipeRedis::Error;
@@ -1000,11 +1000,11 @@ L<http://redis.io/topics/cluster-spec>
 
 =item startup_nodes => \@nodes
 
-Specifies the list of startup nodes. Parameter should contain array of hashes
-that contains addresses of some nodes in the cluster. Each hash should contain
-C<host> and C<port> elements. The client will try to connect to random node
-from the list to retrieve information about all cluster nodes and slots
-mappings. If the client could not connect to first selected node, it will try
+Specifies the list of startup nodes. Parameter should contain the array of
+hashes that contains addresses of some nodes in the cluster. Each hash should
+contain C<host> and C<port> elements. The client will try to connect to random
+node from the list to retrieve information about all cluster nodes and slots
+mapping. If the client could not connect to first selected node, it will try
 to connect to another random node from the list.
 
 =item password => $password
@@ -1049,9 +1049,9 @@ Not set by default.
 
 =item lazy => $boolean
 
-If enabled, the connection to nodes establishes at time when you will send the
-first command to the cluster. By default the connection establishes after
-calling of the C<new> method.
+If enabled, the initial connection to the startup node establishes at time when
+you will send the first command to the cluster. By default the initial
+connection establishes after calling of the C<new> method.
 
 Disabled by default.
 
@@ -1137,13 +1137,13 @@ to C<STDERR>.
 To execute the command you must call particular method with corresponding name.
 The reply to the command is passed to the callback in first argument. If any
 error occurred during the command execution, the error object is passed to the
-callback in second argument. Error object is the instance of the class
+callback in second argument. The error object is the instance of the class
 L<AnyEvent::RipeRedis::Error>.
 
 Before the command execution, the client determines the pool of nodes, on which
 the command can be executed. The pool can contain the one or more nodes
-depending on the cluster and client configuration and command type. The client
-will try to execute the command on random node from the pool and, if the
+depending on the cluster and the client configurations, and command type. The
+client will try to execute the command on random node from the pool and, if the
 command failed on selected node, the client will try to execute it on another
 random node.
 
