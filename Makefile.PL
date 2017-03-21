@@ -9,7 +9,7 @@ WriteMakefile(
   PREREQ_PM        => {
     'AnyEvent::RipeRedis' => '0.36',
     'AnyEvent'            => '6.01',
-    'List::MoreUtils'     => '0.416',
+    'List::MoreUtils'     => '0.410',
     'Scalar::Util'        => '0',
     'Carp'                => '0',
   },
