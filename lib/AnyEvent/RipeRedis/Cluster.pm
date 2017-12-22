@@ -659,7 +659,7 @@ sub _route {
 
   unless ( defined $nodes ) {
     my $err = _new_error(
-      'ERR Target node not found. Maybe not all slots are served.',
+      'ERR Target node not found. Maybe not all slots are served',
       E_OPRN_ERROR
     );
     AE::postpone { $cmd->{on_reply}->( undef, $err ) };
@@ -824,7 +824,7 @@ sub _abort {
   $self->{_temp_queue}  = [];
 
   if ( !defined $err && @queued_commands ) {
-    $err = _new_error( 'Connection closed by client prematurely.',
+    $err = _new_error( 'Connection closed by client prematurely',
         E_CONN_CLOSED_BY_CLIENT );
   }
 
