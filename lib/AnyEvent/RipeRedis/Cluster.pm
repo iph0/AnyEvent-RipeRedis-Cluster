@@ -5,7 +5,7 @@ use strict;
 use warnings;
 use base qw( Exporter );
 
-our $VERSION = '0.30';
+our $VERSION = '0.32';
 
 use AnyEvent::RipeRedis;
 use AnyEvent::RipeRedis::Error;
@@ -167,6 +167,8 @@ sub nodes {
   }
 
   my $nodes = $self->_nodes( $slot, $allow_slaves );
+
+  return unless defined $nodes;
 
   return wantarray
       ? @{ $self->{_nodes_pool} }{ @{$nodes} }
@@ -654,6 +656,17 @@ sub _route {
   }
 
   my $nodes = $self->_nodes( $slot, $allow_slaves );
+
+  unless ( defined $nodes ) {
+    my $err = _new_error(
+      'ERR Target node not found. Maybe not all slots are served.',
+      E_OPRN_ERROR
+    );
+    AE::postpone { $cmd->{on_reply}->( undef, $err ) };
+
+    return;
+  }
+
   $self->_execute( $cmd, $nodes );
 
   return;
@@ -760,6 +773,8 @@ sub _nodes {
       $slot > $_->[1] ? -1 : $slot < $_->[0] ? 1 : 0;
     }
     @{ $self->{_slots} };
+
+    return unless defined $range;
 
     return $allow_slaves
         ? $range->[2]
